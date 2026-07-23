@@ -1,0 +1,4 @@
+interface:
+  display_name: "Under Claw Work Plan"
+  short_description: "Task 메타화부터 독립 검수까지 연결 실행"
+  default_prompt: "Use $under-claw-work-plan to prepare and execute this Worklog task through the required skill pipeline."

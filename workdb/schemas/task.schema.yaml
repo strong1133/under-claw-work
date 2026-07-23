@@ -1,0 +1,24 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: WorkTask
+type: object
+required: [schema_version, id, domain_id, milestone_id, title, status, prompt]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^TSK-[A-Za-z0-9_-]+$"}
+  domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
+  milestone_id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
+  title: {type: string, minLength: 1}
+  status:
+    enum: [draft, ready, claimed, running, paused, blocked, completed, cancelled]
+  auto_derive_tasks: {type: boolean, default: false}
+  target_environment: {type: string}
+  prompt:
+    type: object
+    required: [draft_revision, meta_source_revision, approval, draft, meta]
+    properties:
+      draft_revision: {type: integer, minimum: 1}
+      meta_source_revision: {type: integer, minimum: 0}
+      approval: {enum: [missing, stale, pending, approved]}
+      draft: {type: string}
+      meta: {type: string}
+additionalProperties: false
