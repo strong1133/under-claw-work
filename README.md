@@ -13,21 +13,28 @@ rebuildable local projection.
 - Flutter desktop shell for macOS, Windows, and Linux
 - `worklog` Dart CLI for initialization, task listing, and diagnostics
 - deterministic YAML Task loader and disposable SQLite projection
+- canonical Domain/Milestone/Objective/Knowledge/Reference/Event/Claim/Run/
+  Invocation/Control CRUD with relationship validation
+- full canonical entity, relation, run, invocation, and control projection rebuild
+- shared CLI/Flutter setup flow for a user-selected local Git path or Private
+  remote (credentials remain in the platform Git credential helper)
 - Draft/Meta revision and approval execution gate
 - idempotent operation reservation and unique Run creation
 - immutable ControlRequest/ControlDisposition storage
 - provider-neutral RunnerAdapter and audited `under-claw-work-plan` pipeline
 - deliberately locked authentication boundary while provider selection is pending
 
-The current UI reads and controls the vertical slice. Full editors, Git sync,
-reviewed cross-device password authentication, signed installers, and validated
-host adapters remain roadmap work. Hermes is not marked supported.
+The current UI includes repository setup and reads and controls the vertical
+slice. Full entity editors, pull/push/offline merge UX, reviewed cross-device
+password authentication, signed installers, and validated host adapters remain
+roadmap work. Hermes is not marked supported.
 
 ## Run
 
 ```sh
 flutter pub get
 flutter run -d macos
+dart run bin/worklog.dart setup /path/to/user-workspace "My desktop"
 dart run bin/worklog.dart init /path/to/user-workspace
 dart run bin/worklog.dart task-list /path/to/user-workspace
 ```

@@ -2,16 +2,38 @@ import 'dart:io';
 
 import 'package:under_claw_work/core/worklog_core.dart';
 
-void main(List<String> arguments) {
+Future<void> main(List<String> arguments) async {
   if (arguments.isEmpty || arguments.contains('--help')) {
     stdout.writeln('''
 worklog <command> [workspace]
 
 Commands:
+  setup <path> <environment-name> [remote]
+             connect/init a user-selected Git workspace, or clone a remote
   init       create the portable workspace layout and local SQLite projection
   task-list  rebuild the projection and list tasks
   doctor     verify workspace and report locked capabilities
 ''');
+    return;
+  }
+  if (arguments.first == 'setup') {
+    if (arguments.length < 3) {
+      stderr.writeln(
+        'Usage: worklog setup <local-path> <environment-name> [remote]',
+      );
+      exitCode = 64;
+      return;
+    }
+    final result = await SetupService().setup(
+      SetupRequest(
+        localPath: arguments[1],
+        environmentName: arguments[2],
+        privateRemote: arguments.length > 3 ? Uri.parse(arguments[3]) : null,
+      ),
+    );
+    stdout.writeln('Workspace ready: ${result.workspace.root.path}');
+    stdout.writeln('Environment: ${result.environmentId}');
+    stdout.writeln('Clone: ${result.cloned ? "completed" : "not-required"}');
     return;
   }
   final workspace = Workspace(

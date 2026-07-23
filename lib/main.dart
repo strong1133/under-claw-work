@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'core/worklog_core.dart';
 
@@ -26,7 +25,116 @@ class UnderClawWorkApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: WorkspaceScreen(workspaceOverride: workspaceOverride),
+      home: workspaceOverride == null
+          ? const SetupScreen()
+          : WorkspaceScreen(workspaceOverride: workspaceOverride),
+    );
+  }
+}
+
+class SetupScreen extends StatefulWidget {
+  const SetupScreen({super.key});
+
+  @override
+  State<SetupScreen> createState() => _SetupScreenState();
+}
+
+class _SetupScreenState extends State<SetupScreen> {
+  final _path = TextEditingController();
+  final _environment = TextEditingController();
+  final _remote = TextEditingController();
+  Directory? _workspace;
+  String? _error;
+  bool _running = false;
+
+  @override
+  void dispose() {
+    _path.dispose();
+    _environment.dispose();
+    _remote.dispose();
+    super.dispose();
+  }
+
+  Future<void> _setup() async {
+    setState(() {
+      _running = true;
+      _error = null;
+    });
+    try {
+      final remote = _remote.text.trim();
+      final result = await SetupService().setup(
+        SetupRequest(
+          localPath: _path.text.trim(),
+          environmentName: _environment.text.trim(),
+          privateRemote: remote.isEmpty ? null : Uri.parse(remote),
+        ),
+      );
+      if (mounted) setState(() => _workspace = result.workspace.root);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final workspace = _workspace;
+    if (workspace != null) {
+      return WorkspaceScreen(workspaceOverride: workspace);
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('Under Claw Work setup')),
+      body: Center(
+        child: SizedBox(
+          width: 560,
+          child: ListView(
+            padding: const EdgeInsets.all(32),
+            shrinkWrap: true,
+            children: [
+              Text(
+                'Connect your private Git workspace',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _path,
+                decoration: const InputDecoration(
+                  labelText: 'Local Git path',
+                  hintText: '/path/to/workspace',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _environment,
+                decoration: const InputDecoration(
+                  labelText: 'Environment name',
+                  hintText: 'My desktop',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _remote,
+                decoration: const InputDecoration(
+                  labelText: 'Private remote (optional)',
+                  helperText:
+                      'Credentials must come from your Git credential helper.',
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: Colors.red)),
+              ],
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: _running ? null : _setup,
+                icon: const Icon(Icons.folder_open),
+                label: Text(_running ? 'Connecting…' : 'Connect workspace'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -56,9 +164,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Future<void> _initialize() async {
     final root =
         widget.workspaceOverride ??
-        Directory(
-          '${(await getApplicationSupportDirectory()).path}/sample-workspace',
-        );
+        (throw StateError('Workspace setup must complete before opening.'));
     final projection = ProjectionStore(Workspace(root));
     final tasks = projection.rebuild();
     if (!mounted) return;

@@ -1,8 +1,6 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
-import 'package:sqlite3/sqlite3.dart';
-
+import 'canonical_repository.dart';
 import 'id.dart';
 import 'models.dart';
 import 'projection.dart';
@@ -18,78 +16,95 @@ class ControlService {
     if (!task.isMetaCurrent) {
       throw StateError('Task Meta Prompt is missing, stale, or unapproved.');
     }
-    final database = projection.open();
-    final existing = database.select(
-      'SELECT reserved_run_id FROM operations WHERE operation_id = ?',
-      [operationId],
-    );
-    if (existing.isNotEmpty) {
-      return existing.single['reserved_run_id'] as String;
+    final repository = CanonicalRepository(workspace);
+    for (final request in repository.list(EntityKind.controlRequest)) {
+      if (request.data['operation_id'] == operationId) {
+        if (request.data['task_id'] != task.id) {
+          throw StateError('Operation id already belongs to another task.');
+        }
+        return request.data['reserved_run_id']! as String;
+      }
     }
 
     final runId = newId('RUN');
-    final requestId = newId('CTL');
-    database.execute('BEGIN IMMEDIATE');
+    final requestId = newId('CTR');
+    final now = DateTime.now().toUtc().toIso8601String();
     try {
-      database.execute('INSERT INTO operations VALUES (?, ?, ?)', [
-        operationId,
-        task.id,
-        runId,
-      ]);
-      database.execute('INSERT INTO control_requests VALUES (?, ?, ?, ?, ?)', [
-        requestId,
-        operationId,
-        task.id,
-        ControlCommand.start.name,
-        DateTime.now().toUtc().toIso8601String(),
-      ]);
-      database.execute('INSERT INTO runs VALUES (?, ?, ?, ?)', [
-        runId,
-        operationId,
-        task.id,
-        'requested',
-      ]);
-      database.execute('COMMIT');
-    } on SqliteException {
-      database.execute('ROLLBACK');
-      final recovered = database.select(
-        'SELECT reserved_run_id FROM operations WHERE operation_id = ?',
-        [operationId],
+      repository.create(
+        CanonicalEntity(
+          kind: EntityKind.controlRequest,
+          id: requestId,
+          data: {
+            'schema_version': 1,
+            'id': requestId,
+            'type': 'control_request',
+            'operation_id': operationId,
+            'task_id': task.id,
+            'run_id': null,
+            'command': 'start',
+            'expected_task_revision': task.promptDraftRevision,
+            'target_environment_id': task.targetEnvironment,
+            'requested_by': {'actor_type': 'user', 'actor_id': 'local-user'},
+            'requested_from_environment_id': task.targetEnvironment,
+            'idempotency_key': operationId,
+            'reserved_run_id': runId,
+            'requested_at': now,
+          },
+        ),
       );
-      if (recovered.isNotEmpty) {
-        return recovered.single['reserved_run_id'] as String;
+    } on FileSystemException {
+      for (final request in repository.list(EntityKind.controlRequest)) {
+        if (request.data['operation_id'] == operationId) {
+          return request.data['reserved_run_id']! as String;
+        }
       }
       rethrow;
     }
-    _writeExclusive(
-      File(p.join(workspace.controls.path, '$requestId.yaml')),
-      '''
-schema_version: 1
-id: $requestId
-operation_id: $operationId
-task_id: ${task.id}
-command: start
-reserved_run_id: $runId
-''',
+    repository.create(
+      CanonicalEntity(
+        kind: EntityKind.run,
+        id: runId,
+        data: {
+          'schema_version': 1,
+          'id': runId,
+          'type': 'run',
+          'operation_id': operationId,
+          'task_id': task.id,
+          'status': 'requested',
+          'created_at': now,
+        },
+      ),
     );
+    projection.rebuild();
     return runId;
   }
 
   void addDisposition(String requestId, String disposition) {
-    final database = projection.open();
-    database.execute('INSERT INTO control_dispositions VALUES (?, ?, ?)', [
-      requestId,
-      disposition,
-      DateTime.now().toUtc().toIso8601String(),
-    ]);
-    _writeExclusive(
-      File(p.join(workspace.controls.path, '$requestId.disposition.yaml')),
-      'request_id: $requestId\ndisposition: $disposition\n',
+    final repository = CanonicalRepository(workspace);
+    if (repository
+        .list(EntityKind.controlDisposition)
+        .any((item) => item.data['request_id'] == requestId)) {
+      throw const FormatException('DISPOSITION_EXISTS');
+    }
+    final request = repository.get(EntityKind.controlRequest, requestId);
+    final operationId = request?.data['operation_id'] ?? 'unknown';
+    final eventId = newId('EVT');
+    repository.create(
+      CanonicalEntity(
+        kind: EntityKind.controlDisposition,
+        id: eventId,
+        data: {
+          'schema_version': 1,
+          'id': eventId,
+          'type': 'control_disposition',
+          'event_type': 'control_disposition',
+          'request_id': requestId,
+          'operation_id': operationId,
+          'disposition': disposition,
+          'occurred_at': DateTime.now().toUtc().toIso8601String(),
+        },
+      ),
     );
-  }
-
-  void _writeExclusive(File file, String content) {
-    file.createSync(exclusive: true);
-    file.writeAsStringSync(content, flush: true);
+    projection.rebuild();
   }
 }
