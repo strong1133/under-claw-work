@@ -1,0 +1,19 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ImmutableSkillInvocation
+type: object
+required: [id, type, run_id, skill_id, sequence, bundle_version, status]
+properties:
+  id: {type: string, pattern: "^SKI-[A-Za-z0-9_-]+$"}
+  type: {const: skill_invocation}
+  run_id: {type: string}
+  skill_id:
+    enum:
+      - under-claw-work-plan
+      - under-claw-meta-prompt
+      - under-claw-jarvis-plan-loop
+      - under-claw-jarvis-plan
+  round: {type: integer, minimum: 0}
+  sequence: {type: integer, minimum: 1}
+  bundle_version: {type: string}
+  status: {enum: [started, completed, failed, cancelled]}
+additionalProperties: true

@@ -206,9 +206,155 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
   }
 
+  Future<void> _createTask() async {
+    final domain = TextEditingController();
+    final milestone = TextEditingController();
+    final title = TextEditingController();
+    final environment = TextEditingController(text: 'ENV-local');
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create Task'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: domain,
+                decoration: const InputDecoration(labelText: 'Domain ID'),
+              ),
+              TextField(
+                controller: milestone,
+                decoration: const InputDecoration(labelText: 'Milestone ID'),
+              ),
+              TextField(
+                controller: title,
+                decoration: const InputDecoration(labelText: 'Title'),
+              ),
+              TextField(
+                controller: environment,
+                decoration: const InputDecoration(labelText: 'Environment ID'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    try {
+      final task = TaskRepository(Workspace(_root!)).create(
+        WorkTask(
+          id: newId('TSK'),
+          domainId: domain.text.trim(),
+          milestoneId: milestone.text.trim(),
+          title: title.text.trim(),
+          status: TaskStatus.draft,
+          promptDraft: '',
+          promptMeta: '',
+          promptDraftRevision: 1,
+          promptMetaSourceRevision: 0,
+          approval: PromptApproval.missing,
+          autoDeriveTasks: false,
+          targetEnvironment: environment.text.trim(),
+        ),
+      );
+      _refresh();
+      setState(() => _selected = task);
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  Future<void> _editPrompt({required bool meta}) async {
+    final task = _selected;
+    if (task == null) return;
+    final controller = TextEditingController(
+      text: meta ? task.promptMeta : task.promptDraft,
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(meta ? 'Edit Meta Prompt' : 'Edit Prompt Draft'),
+        content: SizedBox(
+          width: 620,
+          child: TextField(controller: controller, minLines: 8, maxLines: 18),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (saved != true) return;
+    final repository = TaskRepository(Workspace(_root!));
+    final updated = meta
+        ? repository.saveMeta(task, controller.text)
+        : repository.saveDraft(task, controller.text);
+    _refresh();
+    setState(() => _selected = updated);
+  }
+
+  void _approveMeta() {
+    final task = _selected;
+    if (task == null) return;
+    try {
+      final updated = TaskRepository(
+        Workspace(_root!),
+      ).approveMeta(task).copyWith(status: TaskStatus.ready);
+      TaskRepository(Workspace(_root!)).update(updated);
+      _refresh();
+      setState(() => _selected = updated);
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  void _requestControl(ControlCommand command) {
+    final task = _selected;
+    if (task == null) return;
+    try {
+      final runs = _projection!.open().select(
+        'SELECT id FROM runs WHERE task_id = ? ORDER BY rowid DESC LIMIT 1',
+        [task.id],
+      );
+      final runId = runs.isEmpty ? null : runs.single['id'] as String;
+      final result = ControlService(Workspace(_root!), _projection!).request(
+        task,
+        command,
+        operationId: newId('OP'),
+        runId: command == ControlCommand.start ? null : runId,
+      );
+      setState(() => _message = '${command.name} requested · $result');
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _root == null ? null : _createTask,
+        icon: const Icon(Icons.add),
+        label: const Text('Task'),
+      ),
       appBar: AppBar(
         title: const Text('Under Claw Work'),
         actions: [
@@ -239,6 +385,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                           task: _selected!,
                           message: _message,
                           onStart: _requestStart,
+                          onEditDraft: () => _editPrompt(meta: false),
+                          onEditMeta: () => _editPrompt(meta: true),
+                          onApproveMeta: _approveMeta,
+                          onControl: _requestControl,
                         ),
                 ),
               ],
@@ -327,11 +477,19 @@ class _TaskDetail extends StatelessWidget {
     required this.task,
     required this.message,
     required this.onStart,
+    required this.onEditDraft,
+    required this.onEditMeta,
+    required this.onApproveMeta,
+    required this.onControl,
   });
 
   final WorkTask task;
   final String? message;
   final VoidCallback onStart;
+  final VoidCallback onEditDraft;
+  final VoidCallback onEditMeta;
+  final VoidCallback onApproveMeta;
+  final ValueChanged<ControlCommand> onControl;
 
   @override
   Widget build(BuildContext context) {
@@ -356,10 +514,32 @@ class _TaskDetail extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         Text('Prompt Draft', style: Theme.of(context).textTheme.titleMedium),
+        TextButton.icon(
+          onPressed: onEditDraft,
+          icon: const Icon(Icons.edit),
+          label: const Text('Edit Draft'),
+        ),
         const SizedBox(height: 6),
         SelectableText(task.promptDraft),
         const SizedBox(height: 24),
         Text('Prompt Meta', style: Theme.of(context).textTheme.titleMedium),
+        Wrap(
+          spacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: onEditMeta,
+              icon: const Icon(Icons.auto_fix_high),
+              label: const Text('Save generated Meta'),
+            ),
+            TextButton.icon(
+              onPressed: task.approval == PromptApproval.pending
+                  ? onApproveMeta
+                  : null,
+              icon: const Icon(Icons.approval),
+              label: const Text('Approve Meta'),
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
         SelectableText(
           task.promptMeta.isEmpty ? 'Not generated' : task.promptMeta,
@@ -372,6 +552,23 @@ class _TaskDetail extends StatelessWidget {
             icon: const Icon(Icons.play_arrow),
             label: const Text('Request start'),
           ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final command in [
+              ControlCommand.pause,
+              ControlCommand.resume,
+              ControlCommand.cancel,
+              ControlCommand.complete,
+            ])
+              OutlinedButton(
+                onPressed: () => onControl(command),
+                child: Text('Request ${command.name}'),
+              ),
+          ],
         ),
         if (message != null) ...[const SizedBox(height: 16), Text(message!)],
       ],

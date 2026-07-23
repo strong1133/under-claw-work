@@ -38,6 +38,17 @@ revision, runner/environment, timestamps, result reference, and parent
 invocation ID. Missing order, a loop round without the base plan, or missing
 independent review blocks completion.
 
+On Hermes, load each nested skill with `skill_view` and record the completed
+host result with:
+
+```text
+worklog invocation-record <workspace> <run-id> <skill-id> <round> <sequence> <status>
+```
+
+The command writes canonical data before rebuilding SQLite. A skill name in
+assistant prose, a Hermes bundle load, or stdout without that canonical record
+is not execution evidence.
+
 ## Output
 
 Return final state, ordered trace, reviewer score/evidence, result refs, created

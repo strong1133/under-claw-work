@@ -11,13 +11,16 @@ Read [references/contract.md](references/contract.md) before execution.
 
 1. Load the Task Draft, revision, linked objective, knowledge, references, and
    execution policy.
-2. Explicitly invoke `under-claw-meta-prompt`. Store the generated Meta Prompt
-   with its source Draft revision.
+2. Use the host's native skill loader (`skill_view` on Hermes) to explicitly
+   load and invoke `under-claw-meta-prompt`. Use the installed `worklog` CLI to
+   append invocation start/result audit to the canonical workspace. Store the
+   generated Meta Prompt with its source Draft revision.
 3. Stop at the approval gate unless that exact Meta revision is approved by the
    user or an authorized repository policy.
-4. Explicitly invoke `under-claw-jarvis-plan-loop` with the approved Meta
+4. Explicitly load and invoke `under-claw-jarvis-plan-loop` with the approved Meta
    Prompt. Require every loop round to explicitly invoke
-   `under-claw-jarvis-plan`.
+   `under-claw-jarvis-plan` through the same native loader. A Hermes bundle that
+   merely loads several skills is not proof of this nested execution.
 5. Require an independent reviewer verdict and TARGET score of at least 9.5.
    A lower score continues within policy limits or ends blocked; it never
    completes the Task.
@@ -26,3 +29,6 @@ Read [references/contract.md](references/contract.md) before execution.
 
 Return a structured outcome with Task/Run IDs, final state, invocation trace,
 review score, evidence references, and created Knowledge/Event/follow-up IDs.
+
+Never claim a stage ran because its name appeared in prose. Each stage requires
+the host invocation result and a corresponding immutable canonical audit entry.

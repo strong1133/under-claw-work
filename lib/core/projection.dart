@@ -15,8 +15,17 @@ class ProjectionStore {
 
   Database open() {
     workspace.ensureLayout();
-    return _database ??= sqlite3.open(workspace.database.path)
-      ..execute('''
+    if (_database != null) return _database!;
+    try {
+      _database = sqlite3.open(workspace.database.path);
+      _database!.select('PRAGMA schema_version');
+    } on SqliteException {
+      _database?.close();
+      _database = null;
+      if (workspace.database.existsSync()) workspace.database.deleteSync();
+      _database = sqlite3.open(workspace.database.path);
+    }
+    return _database!..execute('''
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY,
@@ -247,5 +256,8 @@ class ProjectionStore {
     }
   }
 
-  void dispose() => _database?.close();
+  void dispose() {
+    _database?.close();
+    _database = null;
+  }
 }

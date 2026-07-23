@@ -32,9 +32,22 @@ entities; Task references them by ID rather than embedding all context.
 5. RunnerAdapter absorbs provider differences. Task data does not require a
    model ID.
 
+## Hermes boundary
+
+Current Hermes upstream exposes skills at
+`${HERMES_HOME:-~/.hermes}/skills/`, native `hermes skills` lifecycle commands,
+and deterministic loading with
+`hermes chat -s under-claw-work-plan -q "<request>"`. Under Claw Work does not
+modify Hermes Core and does not use a project plugin for the MVP. The four
+skills remain independent; the orchestration skill records actual nested
+invocation evidence in the Git canonical workspace.
+
+This is a verified upstream/process contract. Live remote E2E remains
+separately gated and is never inferred from a fixture.
+
 ## Current boundary
 
 This first implementation is an executable vertical slice, not the complete
-distribution. The external cross-device authentication provider is unselected,
-release artifacts are unsigned, and Hermes has no accepted adapter. The UI
-therefore exposes no password setup that could imply an unsafe protocol.
+distribution. The external cross-device authentication provider is unselected
+and release artifacts are unsigned. The UI therefore exposes no password setup
+that could imply an unsafe protocol.

@@ -46,6 +46,34 @@ class WorkTask {
       promptMeta.isNotEmpty &&
       promptMetaSourceRevision == promptDraftRevision &&
       approval == PromptApproval.approved;
+
+  WorkTask copyWith({
+    String? title,
+    TaskStatus? status,
+    String? promptDraft,
+    String? promptMeta,
+    int? promptDraftRevision,
+    int? promptMetaSourceRevision,
+    PromptApproval? approval,
+    bool? autoDeriveTasks,
+    String? targetEnvironment,
+  }) {
+    return WorkTask(
+      id: id,
+      domainId: domainId,
+      milestoneId: milestoneId,
+      title: title ?? this.title,
+      status: status ?? this.status,
+      promptDraft: promptDraft ?? this.promptDraft,
+      promptMeta: promptMeta ?? this.promptMeta,
+      promptDraftRevision: promptDraftRevision ?? this.promptDraftRevision,
+      promptMetaSourceRevision:
+          promptMetaSourceRevision ?? this.promptMetaSourceRevision,
+      approval: approval ?? this.approval,
+      autoDeriveTasks: autoDeriveTasks ?? this.autoDeriveTasks,
+      targetEnvironment: targetEnvironment ?? this.targetEnvironment,
+    );
+  }
 }
 
 class ControlRequest {

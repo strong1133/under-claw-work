@@ -1,10 +1,14 @@
 export 'auth.dart';
 export 'canonical_repository.dart';
+export 'claim_service.dart';
 export 'control_service.dart';
+export 'git_sync_service.dart';
 export 'id.dart';
 export 'models.dart';
 export 'projection.dart';
+export 'process_runner_adapter.dart';
 export 'skill_pipeline.dart';
 export 'setup_service.dart';
 export 'task_codec.dart';
+export 'task_repository.dart';
 export 'workspace.dart';

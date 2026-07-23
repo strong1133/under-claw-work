@@ -236,7 +236,6 @@ class CanonicalRepository {
 
   static const _immutableKinds = {
     EntityKind.event,
-    EntityKind.claim,
     EntityKind.invocation,
     EntityKind.controlRequest,
     EntityKind.controlDisposition,

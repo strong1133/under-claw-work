@@ -1,4 +1,7 @@
 import 'models.dart';
+import 'canonical_repository.dart';
+import 'id.dart';
+import 'claim_service.dart';
 import 'projection.dart';
 
 class OrchestrationResult {
@@ -24,7 +27,11 @@ abstract interface class RunnerAdapter {
 }
 
 class SkillPipeline {
-  SkillPipeline(this.projection, this.runner);
+  SkillPipeline(
+    this.projection,
+    this.runner, {
+    this.environmentId = 'ENV-local',
+  });
 
   static const orchestrator = 'under-claw-work-plan';
   static const metaPrompt = 'under-claw-meta-prompt';
@@ -34,23 +41,103 @@ class SkillPipeline {
 
   final ProjectionStore projection;
   final RunnerAdapter runner;
+  final String environmentId;
 
   Future<OrchestrationResult> execute(WorkTask task, String runId) async {
     if (!task.isMetaCurrent) {
       throw StateError('Approved current Meta Prompt required.');
     }
     final root = SkillInvocation(orchestrator, runId, 0);
-    final result = await runner.invokeOrchestration(root);
-    _validate(result);
-    final database = projection.open();
-    var sequence = 0;
-    for (final invocation in [root, ...result.trace]) {
-      database.execute(
-        'INSERT INTO skill_invocations '
-        '(run_id, skill_id, round, sequence) VALUES (?, ?, ?, ?)',
-        [invocation.runId, invocation.skillId, invocation.round, ++sequence],
+    final claims = ClaimService(projection.workspace, projection);
+    final claim = claims.acquire(
+      taskId: task.id,
+      runId: runId,
+      environmentId: environmentId,
+    );
+    late final OrchestrationResult result;
+    try {
+      result = await runner.invokeOrchestration(root);
+      _validate(result);
+    } finally {
+      claims.release(claim.id);
+    }
+    final repository = CanonicalRepository(projection.workspace);
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (repository.get(EntityKind.run, runId) == null) {
+      repository.create(
+        CanonicalEntity(
+          kind: EntityKind.run,
+          id: runId,
+          data: {
+            'schema_version': 1,
+            'id': runId,
+            'type': 'run',
+            'operation_id': 'OP-$runId',
+            'task_id': task.id,
+            'status': 'running',
+            'created_at': now,
+          },
+        ),
       );
     }
+    var sequence = 0;
+    for (final invocation in [root, ...result.trace]) {
+      final currentSequence = ++sequence;
+      final exists = repository
+          .list(EntityKind.invocation)
+          .any(
+            (item) =>
+                item.data['run_id'] == runId &&
+                item.data['sequence'] == currentSequence &&
+                item.data['skill_id'] == invocation.skillId,
+          );
+      if (exists) continue;
+      final invocationId = newId('SKI');
+      repository.create(
+        CanonicalEntity(
+          kind: EntityKind.invocation,
+          id: invocationId,
+          data: {
+            'schema_version': 1,
+            'id': invocationId,
+            'type': 'skill_invocation',
+            'run_id': runId,
+            'skill_id': invocation.skillId,
+            'round': invocation.round,
+            'sequence': currentSequence,
+            'parent_skill_id': invocation.parentSkillId,
+            'bundle_version': 'mvp-1',
+            'started_at': now,
+            'finished_at': now,
+            'status': 'completed',
+          },
+        ),
+      );
+    }
+    final eventId = newId('EVT');
+    repository.create(
+      CanonicalEntity(
+        kind: EntityKind.event,
+        id: eventId,
+        data: {
+          'schema_version': 1,
+          'id': eventId,
+          'type': 'event',
+          'event_type': 'orchestration_completed',
+          'run_id': runId,
+          'reviewer_score': result.reviewerScore,
+          'independent_reviewer': result.independentReviewer,
+          'result_refs': {
+            'knowledge': result.knowledgeIds,
+            'events': result.eventIds,
+            'follow_up_tasks': result.followUpTaskIds,
+          },
+          'occurred_at': now,
+        },
+      ),
+    );
+    projection.rebuild();
+    final database = projection.open();
     for (final entry in <(String, String)>[
       ...result.knowledgeIds.map((id) => ('knowledge', id)),
       ...result.eventIds.map((id) => ('event', id)),
@@ -59,7 +146,7 @@ class SkillPipeline {
       database.execute(
         'INSERT INTO knowledge_events (id, run_id, entity_type, entity_ref) '
         'VALUES (?, ?, ?, ?)',
-        ['${entry.$1}:${entry.$2}', runId, entry.$1, entry.$2],
+        ['$runId:${entry.$1}:${entry.$2}', runId, entry.$1, entry.$2],
       );
     }
     return result;

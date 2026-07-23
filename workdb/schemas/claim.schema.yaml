@@ -1,0 +1,14 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: TaskClaimLease
+type: object
+required: [id, type, task_id, run_id, environment_id, heartbeat_at, expires_at, status]
+properties:
+  id: {type: string, pattern: "^CLM-[A-Za-z0-9_-]+$"}
+  type: {const: claim}
+  task_id: {type: string}
+  run_id: {type: string}
+  environment_id: {type: string}
+  heartbeat_at: {type: string, format: date-time}
+  expires_at: {type: string, format: date-time}
+  status: {enum: [active, released]}
+additionalProperties: true
