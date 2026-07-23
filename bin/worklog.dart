@@ -8,8 +8,11 @@ Future<void> main(List<String> arguments) async {
 worklog <command> [workspace]
 
 Commands:
+  initialize <path> <environment-name> [remote]
+             initialize a workspace and report connected Agent hosts
   setup <path> <environment-name> [remote]
              connect/init a user-selected Git workspace, or clone a remote
+  host-list  detect Hermes, Claude Code and Codex connections
   init       create the portable workspace layout and local SQLite projection
   task-list  rebuild the projection and list tasks
   entity-list <workspace> [kind]
@@ -28,10 +31,11 @@ Commands:
 ''');
     return;
   }
-  if (arguments.first == 'setup') {
+  if (arguments.first == 'setup' || arguments.first == 'initialize') {
     if (arguments.length < 3) {
       stderr.writeln(
-        'Usage: worklog setup <local-path> <environment-name> [remote]',
+        'Usage: worklog ${arguments.first} '
+        '<local-path> <environment-name> [remote]',
       );
       exitCode = 64;
       return;
@@ -46,6 +50,11 @@ Commands:
     stdout.writeln('Workspace ready: ${result.workspace.root.path}');
     stdout.writeln('Environment: ${result.environmentId}');
     stdout.writeln('Clone: ${result.cloned ? "completed" : "not-required"}');
+    if (arguments.first == 'initialize') _printHosts();
+    return;
+  }
+  if (arguments.first == 'host-list') {
+    _printHosts();
     return;
   }
   final workspace = Workspace(
@@ -239,5 +248,22 @@ Commands:
     }
   } finally {
     projection.dispose();
+  }
+}
+
+void _printHosts() {
+  final hosts = HostDiscoveryService().discover();
+  for (final host in hosts) {
+    final state = host.connected
+        ? 'connected'
+        : host.detected
+        ? 'detected'
+        : 'not-found';
+    stdout.writeln('${host.id}\t$state\t${host.home.path}');
+  }
+  if (!hosts.any((host) => host.detected)) {
+    stdout.writeln(
+      'No Agent host detected; Flutter and CLI management remain available.',
+    );
   }
 }

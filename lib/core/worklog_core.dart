@@ -3,6 +3,7 @@ export 'canonical_repository.dart';
 export 'claim_service.dart';
 export 'control_service.dart';
 export 'git_sync_service.dart';
+export 'host_discovery.dart';
 export 'id.dart';
 export 'models.dart';
 export 'projection.dart';

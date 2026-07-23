@@ -1,96 +1,175 @@
 # Under Claw Work
 
-Under Claw Work is a provider-neutral desktop workspace for domains,
-milestones, tasks, prompts, execution control, and durable AI context.
+[English](README.en.md)
 
-This repository contains the Flutter source and the portable data contracts.
-Each user selects a separate Git repository during setup; YAML and Markdown in
-that repository are the source of truth, while SQLite is an automatically
-rebuildable local projection.
+## 설치 · 초기화 · 첫 사용
 
-It is a work environment and skill bundle, **not an Agent**. On macOS the
-Flutter app and Core run standalone. On remote Linux an existing Hermes Agent
-loads the installed skills and invokes the same headless Core.
+아래 명령은 macOS·Linux용 unsigned MVP artifact를 압축 해제한 디렉터리에서 실행한다.
+Hermes, Claude Code, Codex 중 이미 설치된 host만 자동 탐지해 연결하며 Agent 자체는
+설치하거나 변경하지 않는다.
 
-## MVP implementation
+```bash
+# 1. Under Claw Work runtime과 4-skill bundle 설치
+./packaging/install.sh
 
-- Flutter desktop shell for macOS, Windows, and Linux
-- `worklog` Dart CLI for initialization, task listing, and diagnostics
-- deterministic YAML Task loader and disposable SQLite projection
-- canonical Domain/Milestone/Objective/Knowledge/Reference/Event/Claim/Run/
-  Invocation/Control CRUD with relationship validation
-- full canonical entity, relation, run, invocation, and control projection rebuild
-- shared CLI/Flutter setup flow for a user-selected local Git path or Private
-  remote (credentials remain in the platform Git credential helper)
-- Draft/Meta revision and approval execution gate
-- idempotent operation reservation and unique Run creation
-- immutable start/pause/resume/cancel/complete ControlRequest and disposition
-  storage, plus expiring claim heartbeat/takeover
-- Git status, fast-forward pull, optimistic-head commit/push and explicit
-  offline/divergence results
-- provider-neutral RunnerAdapter and audited `under-claw-work-plan` pipeline
-- executable process adapter with canonical invocation/event recovery
-- revision-pinned skill source, entrypoint checksum verification and
-  ownership/drift-aware uninstaller
-- Flutter Task creation, Draft/Meta editing, approval and all control requests
-- deliberately locked authentication boundary while provider selection is pending
+# 2-A. 기존 로컬 Git 저장소를 작업 저장소로 초기화
+~/.local/share/under-claw-work/bin/worklog initialize \
+  /절대경로/내-work-repository \
+  "내 MacBook"
 
-Generic Domain/Milestone/Objective/Knowledge/Reference CRUD is available in
-Core and the CLI projection browser; dedicated GUI editors and conflict
-resolution UI remain follow-up work. Cross-device shared-password acceptance is
-blocked pending an external provider. Artifacts are unsigned MVP test builds.
+# 2-B. Private 원격 저장소를 새 디렉터리에 clone해 초기화
+~/.local/share/under-claw-work/bin/worklog initialize \
+  /절대경로/새-work-repository \
+  "원격 Linux" \
+  ssh://git@github.com/OWNER/REPOSITORY.git
 
-Hermes' current upstream skill boundary is contract-tested at
-`${HERMES_HOME:-~/.hermes}/skills` and deterministic invocation is
-`hermes chat -s under-claw-work-plan -q "<request>"`. A live remote Hermes E2E
-has not yet been executed, so the repository does not claim production Hermes
-support.
+# 3. 연결된 Agent host 확인
+~/.local/share/under-claw-work/bin/worklog host-list
 
-## Run
-
-```sh
-flutter pub get
-flutter run -d macos
-dart run bin/worklog.dart setup /path/to/user-workspace "My desktop"
-dart run bin/worklog.dart init /path/to/user-workspace
-dart run bin/worklog.dart task-list /path/to/user-workspace
-dart build cli -o build/cli
-UNDER_CLAW_SKILL_SOURCE=/path/to/under-claw-jarvis-plan ./packaging/install.sh
+# 4. Task 확인
+~/.local/share/under-claw-work/bin/worklog task-list \
+  /절대경로/내-work-repository
 ```
 
-The CLI creates `.worklog/projection.sqlite3` itself. Users do not install or
-configure SQLite.
+Private 저장소 인증은 운영체제의 Git credential helper 또는 SSH Agent를 사용한다.
+토큰이나 패스워드를 URL·명령 인자·설정파일에 넣지 않는다.
 
-## Repository layout
+특정 host만 명시적으로 연결해야 하는 격리 설치에서는 다음처럼 지정할 수 있다.
+
+```bash
+UNDER_CLAW_HOSTS=hermes,codex ./packaging/install.sh
+```
+
+제거:
+
+```bash
+./packaging/uninstall.sh
+```
+
+제거기는 Under Claw Work가 소유한 runtime·adapter·skill만 제거한다. Hermes,
+Claude Code, Codex 자체와 사용자의 Git 저장소·설정은 보존한다.
+
+## 무엇인가
+
+Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모음**이다.
 
 ```text
-lib/core/              shared Core and SQLite projection
-lib/main.dart          Flutter desktop application
-bin/worklog.dart       headless CLI entrypoint
-workdb/schemas/        portable contract documentation
-docs/                  implementation and security boundaries
-packaging/             installer ownership manifest templates
-skills/                four-skill bundle entrypoint and execution contract
+                         사용자가 지정한 Git 저장소
+                        YAML·Markdown 영구 정본
+                                  │
+                         Under Claw Work Core
+                    SQLite projection · CLI · Flutter
+                                  │
+             ┌────────────────────┼────────────────────┐
+             │                    │                    │
+      기존 Hermes Agent    기존 Claude Code       기존 Codex
+             └────────────────────┼────────────────────┘
+                         under-claw-work-plan
 ```
 
-## Authentication status
+- Hermes가 있으면 Hermes를 연결한다.
+- Hermes가 없어도 Claude Code 또는 Codex가 있으면 해당 Agent로 Task를 처리한다.
+- 여러 Agent가 있으면 Task의 실행 환경 정책에 따라 선택한다.
+- Agent가 하나도 없어도 Flutter와 CLI에서 업무 DB를 관리할 수 있다. AI Task
+  실행만 `unavailable` 상태가 된다.
 
-Repository authentication is intentionally locked with
-`provider_selection_status: pending_selection`. A production provider must use
-a reviewed PAKE or standard external authentication protocol and pass the
-security acceptance tests. This codebase does not invent cryptography, return a
-verifier to clients, or place password material in Git.
+## 초기화가 수행하는 작업
 
-## Verify
+`worklog initialize`는 다음을 수행한다.
 
-```sh
+1. 사용자가 지정한 로컬 Git 경로를 초기화하거나 Private 원격 저장소를 clone한다.
+2. 환경 고유 ID를 발급한다.
+3. 로컬 SQLite projection을 별도 설치·설정 없이 생성한다.
+4. Hermes·Claude Code·Codex 연결 상태를 표시한다.
+5. Task, Prompt, Knowledge와 실행 기록은 Git 정본을 사용하고 SQLite는 언제든
+   재생성 가능한 인덱스로만 사용한다.
+
+`install.sh`는 host를 다음 경로로 연결한다.
+
+| Host | 탐지 기준 | 설치 대상 |
+|---|---|---|
+| Hermes | `hermes` 명령 또는 `${HERMES_HOME:-~/.hermes}` | `skills/` |
+| Claude Code | `claude` 명령 또는 `${CLAUDE_HOME:-~/.claude}` | `skills/`, `commands/` |
+| Codex | `codex` 명령 또는 `${CODEX_HOME:-~/.codex}` | `skills/` |
+
+기존 동명 파일이 Under Claw Work 소유가 아니면 덮어쓰지 않고 설치를 중단한다.
+
+## Task 실행 스킬
+
+모든 Agent host는 `under-claw-work-plan`을 단일 진입점으로 사용한다.
+
+```text
+under-claw-work-plan
+→ under-claw-meta-prompt
+→ Meta Prompt 승인
+→ under-claw-jarvis-plan-loop
+→ 각 회차 under-claw-jarvis-plan
+→ 독립 검수
+→ Knowledge · Event · Audit 기록
+```
+
+설치 bundle은 다음 네 스킬을 포함한다.
+
+- `under-claw-work-plan`
+- `under-claw-meta-prompt`
+- `under-claw-jarvis-plan-loop`
+- `under-claw-jarvis-plan`
+
+## Flutter 앱
+
+개발 환경에서 실행:
+
+```bash
+flutter pub get
+flutter run -d macos
+```
+
+현재 Flutter 원본은 macOS, Windows와 Linux runner를 포함한다. GitHub Actions는
+세 운영체제의 unsigned MVP artifact를 생성한다. 배포용 코드 서명과 notarization은
+저장소 외부의 플랫폼 인증서가 필요하다.
+
+## 주요 명령
+
+```text
+worklog initialize <path> <environment-name> [remote]
+worklog host-list
+worklog task-list <workspace>
+worklog entity-list <workspace> [kind]
+worklog task-create <workspace> <domain> <milestone> <title> <environment>
+worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
+worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
+worklog git-status <workspace>
+worklog git-pull <workspace>
+worklog doctor <workspace>
+```
+
+## 보안 경계
+
+- 실제 패스워드, verifier, token과 credential은 Git·artifact·로그에 저장하지 않는다.
+- 공유 repository password provider는 검증된 표준 provider 선정 전까지
+  `pending_selection` 상태다.
+- 현재 MVP의 Private Git 접근은 Git credential helper 또는 SSH Agent를 사용한다.
+- 자체 암호 프로토콜은 구현하지 않는다.
+- `.worklog/projection.sqlite3`은 Git에 포함하지 않는다.
+
+## 저장소 구조
+
+```text
+lib/core/              공용 Core와 SQLite projection
+lib/main.dart          Flutter 데스크톱 앱
+bin/worklog.dart       headless CLI
+workdb/schemas/        정본 데이터 계약
+skills/                under-claw-work-plan과 bundle lock
+packaging/             설치·제거와 ownership manifest
+docs/                  아키텍처와 보안 경계
+```
+
+## 개발 검증
+
+```bash
 dart format --output=none --set-exit-if-changed .
 flutter analyze
 flutter test
 flutter build macos
 ./tool/secret_scan.sh
 ```
-
-GitHub Actions publishes clearly labelled unsigned MVP test artifacts for all
-three desktop operating systems. Release signing and notarization require
-platform credentials configured outside this repo.

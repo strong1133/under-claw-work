@@ -3,10 +3,9 @@ set -euo pipefail
 
 product_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_root="${UNDER_CLAW_WORK_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/under-claw-work}"
-hermes_root="${HERMES_HOME:-$HOME/.hermes}"
-skill_root="$hermes_root/skills"
 source_repo="${UNDER_CLAW_SKILL_SOURCE:-}"
 revision="ab3e169f26aea433e4d25709e42a05e74324700b"
+manifest="$install_root/install-manifest.tsv"
 
 case "$install_root" in
   "$HOME"|"${HOME}/"|"/"|"") echo "Unsafe install root" >&2; exit 64 ;;
@@ -40,6 +39,7 @@ tree_checksum() {
     shasum -a 256 |
     awk '{print $1}'
 }
+
 for pair in \
   "under-claw-meta-prompt:ebaf018ff8bf7240115d14bfbf559f0f379971abe30afcd057ad1f6afff1f1a6" \
   "under-claw-jarvis-plan-loop:b99a092f81d3d453e25f888e65203e4c6ad95de54c7a0ac0e45f33b541320799" \
@@ -53,49 +53,113 @@ for pair in \
   }
 done
 
-mkdir -p "$install_root/bin" "$skill_root"
-if [[ -x "$product_root/build/cli/bundle/bin/worklog" ]]; then
-  install -m 0755 \
-    "$product_root/build/cli/bundle/bin/worklog" \
-    "$install_root/bin/worklog"
-  if [[ -d "$product_root/build/cli/bundle/lib" ]]; then
-    rm -rf "$install_root/lib"
-    cp -R "$product_root/build/cli/bundle/lib" "$install_root/lib"
-  fi
-else
+if [[ ! -x "$product_root/build/cli/bundle/bin/worklog" ]]; then
   echo "Required precompiled Core CLI is missing." >&2
   exit 66
 fi
 
-for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan under-claw-work-plan; do
-  target="$skill_root/$skill"
-  if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
-    echo "Refusing to overwrite non-owned skill: $target" >&2
-    exit 73
-  fi
-done
+mkdir -p "$install_root/bin"
+install -m 0755 "$product_root/build/cli/bundle/bin/worklog" "$install_root/bin/worklog"
+if [[ -d "$product_root/build/cli/bundle/lib" ]]; then
+  rm -rf "$install_root/lib"
+  cp -R "$product_root/build/cli/bundle/lib" "$install_root/lib"
+fi
 
-for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan; do
-  target="$skill_root/$skill"
-  rm -rf "$target"
-  cp -R "$source_repo/skills/$skill" "$target"
-  touch "$target/.under-claw-work-owned"
-done
+requested_hosts="${UNDER_CLAW_HOSTS:-auto}"
+host_requested() {
+  [[ "$requested_hosts" == "auto" || ",$requested_hosts," == *",$1,"* ]]
+}
+host_detected() {
+  local host="$1" executable="$2" home_path="$3"
+  host_requested "$host" || return 1
+  if [[ "$requested_hosts" != "auto" ]]; then return 0; fi
+  [[ -d "$home_path" ]] || command -v "$executable" >/dev/null 2>&1
+}
 
-target="$skill_root/under-claw-work-plan"
-rm -rf "$target"
-cp -R "$product_root/skills/under-claw-work-plan" "$target"
-touch "$target/.under-claw-work-owned"
-
-manifest="$install_root/install-manifest.tsv"
 {
-  echo "manifest_version	1"
-  echo "hermes_root	$hermes_root"
+  echo "manifest_version	2"
+  echo "install_root	$install_root"
   echo "skill_revision	$revision"
-  for skill in under-claw-work-plan under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan; do
-    echo "owned_skill	$skill_root/$skill	$(tree_checksum "$skill_root/$skill")"
-  done
 } > "$manifest"
 
-echo "Under Claw Work skill environment installed."
-echo "Hermes: start a fresh session, then use /under-claw-work-plan."
+install_skill_tree() {
+  local host="$1"
+  local host_home="$2"
+  local skill_root="$host_home/skills"
+  mkdir -p "$skill_root"
+  echo "host_root	$host	$host_home" >> "$manifest"
+
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan under-claw-work-plan; do
+    local target="$skill_root/$skill"
+    if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
+      echo "Refusing to overwrite non-owned skill: $target" >&2
+      exit 73
+    fi
+  done
+
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan; do
+    local target="$skill_root/$skill"
+    rm -rf "$target"
+    cp -R "$source_repo/skills/$skill" "$target"
+    touch "$target/.under-claw-work-owned"
+    echo "owned_skill	$host	$target	$(tree_checksum "$target")" >> "$manifest"
+  done
+
+  local target="$skill_root/under-claw-work-plan"
+  rm -rf "$target"
+  cp -R "$product_root/skills/under-claw-work-plan" "$target"
+  touch "$target/.under-claw-work-owned"
+  echo "owned_skill	$host	$target	$(tree_checksum "$target")" >> "$manifest"
+}
+
+install_claude_commands() {
+  local claude_home="$1"
+  local command_root="$claude_home/commands"
+  mkdir -p "$command_root"
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan; do
+    local source="$source_repo/commands/$skill.md"
+    [[ -f "$source" ]] || continue
+    local target="$command_root/$skill.md"
+    if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+      echo "Refusing to overwrite non-owned command: $target" >&2
+      exit 73
+    fi
+    cp "$source" "$target"
+    touch "$target.under-claw-work-owned"
+    echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
+  done
+  local target="$command_root/under-claw-work-plan.md"
+  if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+    echo "Refusing to overwrite non-owned command: $target" >&2
+    exit 73
+  fi
+  cp "$product_root/skills/under-claw-work-plan/SKILL.md" "$target"
+  touch "$target.under-claw-work-owned"
+  echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
+}
+
+connected=0
+hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+if host_detected hermes hermes "$hermes_home"; then
+  install_skill_tree hermes "$hermes_home"
+  connected=$((connected + 1))
+fi
+claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+if host_detected claude-code claude "$claude_home"; then
+  install_skill_tree claude-code "$claude_home"
+  install_claude_commands "$claude_home"
+  connected=$((connected + 1))
+fi
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+if host_detected codex codex "$codex_home"; then
+  install_skill_tree codex "$codex_home"
+  connected=$((connected + 1))
+fi
+
+echo "Under Claw Work runtime installed: $install_root"
+if [[ "$connected" -eq 0 ]]; then
+  echo "No Agent host detected; standalone Flutter/CLI management is available."
+else
+  echo "Connected Agent hosts: $connected"
+fi
+echo "Next: $install_root/bin/worklog initialize <git-path> <environment-name> [remote]"

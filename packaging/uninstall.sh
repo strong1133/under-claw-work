@@ -7,11 +7,13 @@ if [[ ! -f "$manifest" ]]; then
   echo "No Under Claw Work install manifest." >&2
   exit 66
 fi
-hermes_root="$(awk -F '\t' '$1 == "hermes_root" {print $2}' "$manifest")"
-skill_root="$hermes_root/skills"
-[[ -n "$hermes_root" && "$hermes_root" != "/" && "$hermes_root" != "$HOME" ]] || {
-  echo "Unsafe Hermes root in manifest" >&2
-  exit 65
+
+checksum() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
 }
 tree_checksum() {
   find "$1" -type f ! -name .under-claw-work-owned -print0 |
@@ -20,27 +22,49 @@ tree_checksum() {
     shasum -a 256 |
     awk '{print $1}'
 }
+is_registered_target() {
+  local host="$1" target="$2"
+  awk -F '\t' -v host="$host" -v target="$target" '
+    $1 == "host_root" && $2 == host {
+      root=$3
+      if (index(target, root "/skills/") == 1 ||
+          index(target, root "/commands/") == 1) found=1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$manifest"
+}
 
-while IFS=$'\t' read -r kind target expected_hash; do
-  [[ "$kind" == "owned_skill" ]] || continue
-  target_parent="$(cd "$(dirname "$target")" && pwd -P)"
-  [[ "$target_parent" == "$(cd "$skill_root" && pwd -P)" ]] || {
+while IFS=$'\t' read -r kind host target expected_hash; do
+  [[ "$kind" == "owned_skill" || "$kind" == "owned_command" ]] || continue
+  is_registered_target "$host" "$target" || {
     echo "Unsafe manifest target: $target" >&2
     exit 65
   }
-  case "$(basename "$target")" in under-claw-*) ;; *) exit 65 ;; esac
-  if [[ ! -f "$target/.under-claw-work-owned" ]]; then
-    echo "Ownership marker missing: $target" >&2
-    exit 73
+  if [[ "$kind" == "owned_skill" ]]; then
+    [[ -f "$target/.under-claw-work-owned" ]] || {
+      echo "Ownership marker missing: $target" >&2
+      exit 73
+    }
+    [[ "$(tree_checksum "$target")" == "$expected_hash" ]] || {
+      echo "Owned skill changed; refusing removal: $target" >&2
+      exit 73
+    }
+    rm -rf "$target"
+  else
+    [[ -f "$target.under-claw-work-owned" ]] || {
+      echo "Ownership marker missing: $target" >&2
+      exit 73
+    }
+    [[ "$(checksum "$target")" == "$expected_hash" ]] || {
+      echo "Owned command changed; refusing removal: $target" >&2
+      exit 73
+    }
+    rm -f "$target" "$target.under-claw-work-owned"
   fi
-  [[ "$(tree_checksum "$target")" == "$expected_hash" ]] || {
-    echo "Owned skill changed after install; refusing removal: $target" >&2
-    exit 73
-  }
-  rm -rf "$target"
 done < "$manifest"
 
 rm -f "$install_root/bin/worklog" "$manifest"
 rm -rf "$install_root/lib"
 rmdir "$install_root/bin" "$install_root" 2>/dev/null || true
-echo "Installer-owned runtime and skills removed; repositories were preserved."
+echo "Under Claw Work-owned runtime, adapters and skills removed."
+echo "Agent installations, repositories and user settings were preserved."

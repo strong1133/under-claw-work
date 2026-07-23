@@ -208,6 +208,33 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('host discovery is provider-neutral and reports connections', () {
+    final home = Directory(p.join(temporary.path, 'home'))..createSync();
+    Directory(
+      p.join(home.path, '.codex', 'skills', 'under-claw-work-plan'),
+    ).createSync(recursive: true);
+    Directory(p.join(home.path, '.hermes')).createSync(recursive: true);
+
+    final hosts = HostDiscoveryService(
+      userHome: home.path,
+      environment: const {},
+      executableExists: (_) => false,
+    ).discover();
+
+    expect(
+      hosts.singleWhere((host) => host.host == AgentHost.codex).connected,
+      isTrue,
+    );
+    expect(
+      hosts.singleWhere((host) => host.host == AgentHost.hermes).detected,
+      isTrue,
+    );
+    expect(
+      hosts.singleWhere((host) => host.host == AgentHost.claudeCode).detected,
+      isFalse,
+    );
+  });
 }
 
 WorkTask _task({TaskStatus status = TaskStatus.ready}) {
