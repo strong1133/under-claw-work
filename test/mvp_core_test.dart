@@ -111,8 +111,12 @@ void main() {
 '''
               .replaceAll('\n', '');
       final runner = ProcessRunnerAdapter(
-        executable: '/bin/sh',
-        arguments: ['-c', "echo '$payload'"],
+        executable: Platform.isWindows
+            ? Platform.environment['COMSPEC'] ?? 'cmd.exe'
+            : '/bin/sh',
+        arguments: Platform.isWindows
+            ? ['/d', '/s', '/c', 'echo $payload']
+            : ['-c', "printf '%s' '$payload'"],
         workingDirectory: workspace.root.path,
       );
       await SkillPipeline(projection, runner).execute(task, 'RUN-process');
