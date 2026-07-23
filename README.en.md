@@ -5,8 +5,9 @@
 ## Install, initialize, and run
 
 Run these commands from an extracted unsigned MVP artifact on macOS or Linux.
-The installer connects only the Agent hosts already present—Hermes, Claude
-Code, or Codex. It never installs or replaces an Agent.
+The installer connects only existing Claude Code or Codex hosts. It never
+installs or replaces an Agent. Hermes is disabled by default until a trusted
+reviewer-attestation boundary passes acceptance.
 
 ```bash
 # 1. Install the Under Claw Work runtime and four-skill bundle
@@ -38,18 +39,22 @@ configuration files.
 To connect only selected hosts in an isolated installation:
 
 ```bash
-UNDER_CLAW_HOSTS=hermes,codex ./packaging/install.sh
+UNDER_CLAW_HOSTS=codex ./packaging/install.sh
 ```
 
 Uninstall:
 
 ```bash
-./packaging/uninstall.sh
+./packaging/uninstall.sh --mode app
+./packaging/uninstall.sh --mode runtime
+./packaging/uninstall.sh --mode full --workspace /absolute/clone \
+  --confirm-full /absolute/clone
 ```
 
-The uninstaller removes only runtime, adapter, command, and skill files owned
-by Under Claw Work. It preserves Hermes, Claude Code, Codex, user settings, and
-Git repositories.
+`app` removes launchers/commands, and `runtime` also removes owned runtime and
+skills. `full` requires an exact absolute-path confirmation and deletes only a
+workspace cloned by Under Claw Work. Adopted repositories and Agent
+installations are preserved.
 
 ## What it is
 
@@ -70,7 +75,9 @@ and skill bundle**.
                          under-claw-work-plan
 ```
 
-- If Hermes is present, Under Claw Work connects it.
+- Hermes is not connected automatically. Setting
+  `UNDER_CLAW_EXPERIMENTAL_HERMES=1` installs experimental skills only; its
+  Task runner remains fail-closed until acceptance.
 - Without Hermes, Claude Code or Codex can process Tasks.
 - If several hosts are present, Task execution policy selects the environment.
 - With no Agent installed, Flutter and CLI management remain available; only
@@ -86,7 +93,7 @@ The installer uses these host boundaries:
 
 | Host | Detection | Installed integration |
 |---|---|---|
-| Hermes | `hermes` or `${HERMES_HOME:-~/.hermes}` | `skills/` |
+| Hermes (experimental) | explicit opt-in plus `hermes` or `${HERMES_HOME:-~/.hermes}` | `skills/` |
 | Claude Code | `claude` or `${CLAUDE_HOME:-~/.claude}` | `skills/`, `commands/` |
 | Codex | `codex` or `${CODEX_HOME:-~/.codex}` | `skills/` |
 
@@ -130,9 +137,22 @@ worklog initialize <path> <environment-name> [remote]
 worklog host-list
 worklog task-list <workspace>
 worklog entity-list <workspace> [kind]
+worklog entity-create <workspace> <kind> <title> [domain] [milestone]
+worklog entity-update <workspace> <kind> <id> <title>
+worklog entity-archive <workspace> <kind> <id>
+worklog entity-link <workspace> <kind> <id> <field> <target-kind> <target-id>
+worklog graph-validate <workspace>
+worklog knowledge-search <workspace> <query>
+worklog context-build <workspace> <task>
 worklog task-create <workspace> <domain> <milestone> <title> <environment>
+worklog task-policy <workspace> <task> <derive> <followup> <depth>
+worklog task-candidate-list <workspace>
+worklog task-candidate-dispose <workspace> <candidate> <accept|reject>
 worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
+worklog migrate-dry-run <workspace> <legacy-path>
+worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environment> --approve
+worklog migrate-rollback <workspace> <import-id>
 worklog git-status <workspace>
 worklog git-pull <workspace>
 worklog doctor <workspace>

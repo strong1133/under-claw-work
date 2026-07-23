@@ -36,13 +36,13 @@ void main() {
     final repository = TaskRepository(workspace);
     final ready = repository.create(_task());
     final service = ControlService(workspace, projection);
-    final run = service.requestStart(ready, 'OP-start');
-    expect(service.requestStart(ready, 'OP-start'), run);
+    final run = service.requestStart(ready, 'OPR-start');
+    expect(service.requestStart(ready, 'OPR-start'), run);
     final running = ready.copyWith(status: TaskStatus.running);
     final pause = service.request(
       running,
       ControlCommand.pause,
-      operationId: 'OP-pause',
+      operationId: 'OPR-pause',
       runId: run,
     );
     expect(pause, run);
@@ -50,7 +50,7 @@ void main() {
       () => service.request(
         ready,
         ControlCommand.complete,
-        operationId: 'OP-invalid',
+        operationId: 'OPR-invalid',
         runId: run,
       ),
       throwsStateError,
@@ -101,13 +101,22 @@ void main() {
     'real process adapter validates output and persists canonical audit',
     () async {
       final task = TaskRepository(workspace).create(_task());
+      File(
+        '${workspace.root.path}/reviewer-RUN-process.json',
+      ).writeAsStringSync(
+        '{"run_id":"RUN-process","session_id":"review-session-process",'
+        '"producer_session_id":"producer-session-process",'
+        '"reviewer_score":9.5,"independent_reviewer":true}',
+        flush: true,
+      );
       final payload =
           '''
 {"trace":[
  {"skill_id":"under-claw-meta-prompt","round":0},
  {"skill_id":"under-claw-jarvis-plan-loop","round":0},
  {"skill_id":"under-claw-jarvis-plan","round":1}
-],"reviewer_score":9.5,"independent_reviewer":true}
+],"producer_session_id":"producer-session-process",
+"reviewer_artifact_path":"reviewer-RUN-process.json"}
 '''
               .replaceAll('\n', '');
       final runner = ProcessRunnerAdapter(
@@ -116,6 +125,7 @@ void main() {
             ? ['-NoProfile', '-Command', "[Console]::Out.Write('$payload')"]
             : ['-c', "printf '%s' '$payload'"],
         workingDirectory: workspace.root.path,
+        reviewerVerifier: _TestOnlyReviewerVerifier(),
       );
       await SkillPipeline(projection, runner).execute(task, 'RUN-process');
       final canonical = CanonicalRepository(workspace);
@@ -130,6 +140,52 @@ void main() {
           ['RUN-process'],
         ),
         hasLength(4),
+      );
+    },
+  );
+
+  test('process adapter rejects producer acting as reviewer', () async {
+    File(p.join(workspace.root.path, 'same-session.json')).writeAsStringSync(
+      '{"run_id":"RUN-same","session_id":"same",'
+      '"producer_session_id":"same","reviewer_score":10,'
+      '"independent_reviewer":true}',
+    );
+    final payload =
+        '{"trace":[],"producer_session_id":"same",'
+        '"reviewer_artifact_path":"same-session.json"}';
+    final runner = _processForPayload(workspace, payload);
+
+    expect(
+      runner.invokeOrchestration(
+        const SkillInvocation('under-claw-jarvis-plan-loop', 'RUN-same', 0),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test(
+    'process adapter rejects reviewer artifact symlink components',
+    () async {
+      if (Platform.isWindows) return;
+      final real = Directory(p.join(workspace.root.path, 'real-review'))
+        ..createSync();
+      File(p.join(real.path, 'artifact.json')).writeAsStringSync(
+        '{"run_id":"RUN-link","session_id":"reviewer",'
+        '"producer_session_id":"producer","reviewer_score":10,'
+        '"independent_reviewer":true}',
+      );
+      Link(p.join(workspace.root.path, 'linked-review')).createSync(real.path);
+      final runner = _processForPayload(
+        workspace,
+        '{"trace":[],"producer_session_id":"producer",'
+        '"reviewer_artifact_path":"linked-review/artifact.json"}',
+      );
+
+      expect(
+        runner.invokeOrchestration(
+          const SkillInvocation('under-claw-jarvis-plan-loop', 'RUN-link', 0),
+        ),
+        throwsFormatException,
       );
     },
   );
@@ -209,6 +265,65 @@ void main() {
     );
   });
 
+  test('two clones acquire exactly one remote task claim', () async {
+    final bare = Directory(p.join(temporary.path, 'claim-remote.git'));
+    await _git(temporary, ['init', '--bare', bare.path]);
+    final seed = Directory(p.join(temporary.path, 'claim-seed'));
+    await _git(temporary, ['clone', bare.path, seed.path]);
+    await _identity(seed);
+    File(p.join(seed.path, 'README.md')).writeAsStringSync('seed\n');
+    await _git(seed, ['add', '.']);
+    await _git(seed, ['commit', '-m', 'seed']);
+    await _git(seed, ['push', '-u', 'origin', 'HEAD']);
+    final first = Directory(p.join(temporary.path, 'claim-first'));
+    final second = Directory(p.join(temporary.path, 'claim-second'));
+    await _git(temporary, ['clone', bare.path, first.path]);
+    await _git(temporary, ['clone', bare.path, second.path]);
+    await _identity(first);
+    await _identity(second);
+
+    final leases = await Future.wait([
+      GitRemoteClaimService(Workspace(first)).tryAcquire(
+        taskId: 'TSK-race',
+        runId: 'RUN-first',
+        environmentId: 'ENV-first',
+      ),
+      GitRemoteClaimService(Workspace(second)).tryAcquire(
+        taskId: 'TSK-race',
+        runId: 'RUN-second',
+        environmentId: 'ENV-second',
+      ),
+    ]);
+
+    expect(leases.whereType<RemoteClaimLease>(), hasLength(1));
+    final winner = leases.whereType<RemoteClaimLease>().single;
+    final winnerRoot = winner.environmentId == 'ENV-first' ? first : second;
+    final loserRoot = winner.environmentId == 'ENV-first' ? second : first;
+    final renewed = await GitRemoteClaimService(
+      Workspace(winnerRoot),
+    ).renew(winner, ttl: const Duration(minutes: 10));
+    expect(renewed, isNotNull);
+    expect(
+      await GitRemoteClaimService(Workspace(winnerRoot)).release(winner),
+      isFalse,
+    );
+    final takeover = await GitRemoteClaimService(Workspace(loserRoot)).takeover(
+      renewed!,
+      runId: 'RUN-takeover',
+      environmentId: 'ENV-takeover',
+      now: renewed.expiresAt.add(const Duration(seconds: 1)),
+    );
+    expect(takeover, isNotNull);
+    expect(
+      await GitRemoteClaimService(Workspace(winnerRoot)).release(renewed),
+      isFalse,
+    );
+    expect(
+      await GitRemoteClaimService(Workspace(loserRoot)).release(takeover!),
+      isTrue,
+    );
+  });
+
   test('host discovery is provider-neutral and reports connections', () {
     final home = Directory(p.join(temporary.path, 'home'))..createSync();
     Directory(
@@ -228,6 +343,18 @@ void main() {
     );
     expect(
       hosts.singleWhere((host) => host.host == AgentHost.hermes).detected,
+      isFalse,
+    );
+
+    final experimental = HostDiscoveryService(
+      userHome: home.path,
+      environment: const {'UNDER_CLAW_EXPERIMENTAL_HERMES': '1'},
+      executableExists: (_) => false,
+    ).discover();
+    expect(
+      experimental
+          .singleWhere((host) => host.host == AgentHost.hermes)
+          .detected,
       isTrue,
     );
     expect(
@@ -252,6 +379,27 @@ WorkTask _task({TaskStatus status = TaskStatus.ready}) {
     autoDeriveTasks: true,
     targetEnvironment: 'ENV-local',
   );
+}
+
+ProcessRunnerAdapter _processForPayload(Workspace workspace, String payload) {
+  return ProcessRunnerAdapter(
+    executable: Platform.isWindows ? 'powershell.exe' : '/bin/sh',
+    arguments: Platform.isWindows
+        ? ['-NoProfile', '-Command', "[Console]::Out.Write('$payload')"]
+        : ['-c', "printf '%s' '$payload'"],
+    workingDirectory: workspace.root.path,
+    reviewerVerifier: _TestOnlyReviewerVerifier(),
+  );
+}
+
+class _TestOnlyReviewerVerifier implements ReviewerArtifactVerifier {
+  @override
+  Future<bool> verify({
+    required String producerSessionId,
+    required String reviewerSessionId,
+    required List<int> artifactBytes,
+  }) async =>
+      producerSessionId != reviewerSessionId && artifactBytes.isNotEmpty;
 }
 
 Future<void> _git(Directory directory, List<String> arguments) async {

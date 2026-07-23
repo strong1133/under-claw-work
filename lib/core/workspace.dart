@@ -22,8 +22,12 @@ class Workspace {
   Directory get runs => Directory(p.join(workdb.path, 'runs'));
   Directory get invocations => Directory(p.join(workdb.path, 'invocations'));
   Directory get config => Directory(p.join(workdb.path, 'config'));
+  Directory get candidates => Directory(p.join(workdb.path, 'task-candidates'));
+  Directory get migrations => Directory(p.join(local.path, 'migrations'));
   Directory get local => Directory(p.join(root.path, '.worklog'));
   File get database => File(p.join(local.path, 'projection.sqlite3'));
+  File taskRelations(String taskId) =>
+      File(p.join(tasks.path, taskId, 'relations.yaml'));
 
   void ensureLayout() {
     for (final directory in [
@@ -41,7 +45,9 @@ class Workspace {
       runs,
       invocations,
       config,
+      candidates,
       local,
+      migrations,
     ]) {
       directory.createSync(recursive: true);
     }

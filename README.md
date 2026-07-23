@@ -5,8 +5,9 @@
 ## 설치 · 초기화 · 첫 사용
 
 아래 명령은 macOS·Linux용 unsigned MVP artifact를 압축 해제한 디렉터리에서 실행한다.
-Hermes, Claude Code, Codex 중 이미 설치된 host만 자동 탐지해 연결하며 Agent 자체는
-설치하거나 변경하지 않는다.
+Claude Code와 Codex 중 이미 설치된 host만 자동 탐지해 연결하며 Agent 자체는
+설치하거나 변경하지 않는다. Hermes는 검증된 reviewer attestation 경계가 준비될
+때까지 기본 비활성화된 실험 기능이다.
 
 ```bash
 # 1. Under Claw Work runtime과 4-skill bundle 설치
@@ -37,17 +38,21 @@ Private 저장소 인증은 운영체제의 Git credential helper 또는 SSH Age
 특정 host만 명시적으로 연결해야 하는 격리 설치에서는 다음처럼 지정할 수 있다.
 
 ```bash
-UNDER_CLAW_HOSTS=hermes,codex ./packaging/install.sh
+UNDER_CLAW_HOSTS=codex ./packaging/install.sh
 ```
 
 제거:
 
 ```bash
-./packaging/uninstall.sh
+./packaging/uninstall.sh --mode app
+./packaging/uninstall.sh --mode runtime
+./packaging/uninstall.sh --mode full --workspace /absolute/clone \
+  --confirm-full /absolute/clone
 ```
 
-제거기는 Under Claw Work가 소유한 runtime·adapter·skill만 제거한다. Hermes,
-Claude Code, Codex 자체와 사용자의 Git 저장소·설정은 보존한다.
+`app`은 launcher/command만, `runtime`은 소유한 runtime·skill까지 제거한다.
+`full`은 정확한 절대경로 확인을 요구하며 Under Claw Work가 직접 clone한 작업공간만
+삭제한다. 직접 연결한 기존 저장소의 정본과 Hermes, Claude Code, Codex 자체는 보존한다.
 
 ## 무엇인가
 
@@ -67,7 +72,9 @@ Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모
                          under-claw-work-plan
 ```
 
-- Hermes가 있으면 Hermes를 연결한다.
+- Hermes는 자동 연결하지 않는다. 실험용 skill 설치는
+  `UNDER_CLAW_EXPERIMENTAL_HERMES=1`로만 활성화하며 Task runner는 acceptance
+  통과 전 fail-closed 한다.
 - Hermes가 없어도 Claude Code 또는 Codex가 있으면 해당 Agent로 Task를 처리한다.
 - 여러 Agent가 있으면 Task의 실행 환경 정책에 따라 선택한다.
 - Agent가 하나도 없어도 Flutter와 CLI에서 업무 DB를 관리할 수 있다. AI Task
@@ -88,7 +95,7 @@ Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모
 
 | Host | 탐지 기준 | 설치 대상 |
 |---|---|---|
-| Hermes | `hermes` 명령 또는 `${HERMES_HOME:-~/.hermes}` | `skills/` |
+| Hermes (실험) | 명시적 opt-in + `hermes` 또는 `${HERMES_HOME:-~/.hermes}` | `skills/` |
 | Claude Code | `claude` 명령 또는 `${CLAUDE_HOME:-~/.claude}` | `skills/`, `commands/` |
 | Codex | `codex` 명령 또는 `${CODEX_HOME:-~/.codex}` | `skills/` |
 
@@ -135,9 +142,22 @@ worklog initialize <path> <environment-name> [remote]
 worklog host-list
 worklog task-list <workspace>
 worklog entity-list <workspace> [kind]
+worklog entity-create <workspace> <kind> <title> [domain] [milestone]
+worklog entity-update <workspace> <kind> <id> <title>
+worklog entity-archive <workspace> <kind> <id>
+worklog entity-link <workspace> <kind> <id> <field> <target-kind> <target-id>
+worklog graph-validate <workspace>
+worklog knowledge-search <workspace> <query>
+worklog context-build <workspace> <task>
 worklog task-create <workspace> <domain> <milestone> <title> <environment>
+worklog task-policy <workspace> <task> <derive> <followup> <depth>
+worklog task-candidate-list <workspace>
+worklog task-candidate-dispose <workspace> <candidate> <accept|reject>
 worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
+worklog migrate-dry-run <workspace> <legacy-path>
+worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environment> --approve
+worklog migrate-rollback <workspace> <import-id>
 worklog git-status <workspace>
 worklog git-pull <workspace>
 worklog doctor <workspace>

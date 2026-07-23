@@ -88,6 +88,29 @@ class GitSyncService {
     await _checked(['pull', '--ff-only']);
   }
 
+  /// Worker boundary: fetch and reconcile before inspecting canonical requests.
+  Future<void> reconcileForWorker() => pullFastForward();
+
+  /// Publishes only canonical `workdb` changes. A rejected push is surfaced;
+  /// workers must not silently merge or continue from stale state.
+  Future<String> publishWorkerChanges({required String operationId}) async {
+    if (!operationId.startsWith('OPR-')) {
+      throw const FormatException('Worker publish requires an OPR- id.');
+    }
+    final current = await status(fetch: true);
+    if (current.state == GitSyncState.behind) {
+      await pullFastForward();
+    } else if (current.state == GitSyncState.diverged ||
+        current.state == GitSyncState.offline) {
+      throw StateError('Worker cannot publish from ${current.state.name}.');
+    }
+    final head = (await status(fetch: false)).head;
+    return commitAndPush(
+      expectedHead: head,
+      message: 'worklog: apply $operationId',
+    );
+  }
+
   Future<String> commitAndPush({
     required String expectedHead,
     required String message,

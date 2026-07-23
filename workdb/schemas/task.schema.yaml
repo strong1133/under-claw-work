@@ -3,7 +3,9 @@ title: WorkTask
 type: object
 required: [schema_version, id, domain_id, milestone_id, title, status, prompt]
 properties:
-  schema_version: {const: 1}
+  # v1 omitted execution_scope. Readers migrate it to multiEnvironment
+  # (fail-closed); all new writes use v2.
+  schema_version: {enum: [1, 2]}
   id: {type: string, pattern: "^TSK-[A-Za-z0-9_-]+$"}
   domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
   milestone_id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
@@ -11,7 +13,18 @@ properties:
   status:
     enum: [draft, ready, claimed, running, paused, blocked, completed, cancelled]
   auto_derive_tasks: {type: boolean, default: false}
+  auto_followup_tasks: {type: boolean, default: false}
+  max_generation_depth: {type: integer, minimum: 0, maximum: 10, default: 2}
   target_environment: {type: string}
+  execution_scope: {enum: [singleMachine, multiEnvironment]}
+  parent_task_id: {type: [string, "null"]}
+  aligned_objective_ids: {type: array, items: {type: string, pattern: "^OBJ-"}}
+  evidence_knowledge_ids: {type: array, items: {type: string, pattern: "^KNW-"}}
+  source_reference_ids: {type: array, items: {type: string, pattern: "^REF-"}}
+  generation_depth: {type: integer, minimum: 0}
+  generation_fingerprint: {type: [string, "null"]}
+  created_automatically: {type: boolean}
+  legacy_ids: {type: array, items: {type: string}}
   prompt:
     type: object
     required: [draft_revision, meta_source_revision, approval, draft, meta]

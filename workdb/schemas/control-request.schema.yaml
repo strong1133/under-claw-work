@@ -6,12 +6,13 @@ properties:
   schema_version: {const: 1}
   id: {type: string, pattern: "^CTR-[A-Za-z0-9_-]+$"}
   type: {const: control_request}
-  operation_id: {type: string, pattern: "^OP-[A-Za-z0-9_-]+$"}
+  operation_id: {type: string, pattern: "^OPR-[A-Za-z0-9_-]+$"}
   task_id: {type: string, pattern: "^TSK-[A-Za-z0-9_-]+$"}
   run_id: {type: [string, "null"]}
   reserved_run_id: {type: [string, "null"]}
   command: {enum: [start, pause, resume, cancel, complete]}
   expected_task_revision: {type: integer, minimum: 1}
+  control_sequence: {type: integer, minimum: 1}
   target_environment_id: {type: string}
   requested_by: {type: object}
   requested_at: {type: string, format: date-time}

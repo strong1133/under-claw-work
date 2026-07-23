@@ -55,17 +55,39 @@ class SetupService {
     }
 
     final workspace = Workspace(root)..ensureLayout();
+    File(p.join(workspace.local.path, 'setup.json')).writeAsStringSync(
+      '${const JsonEncoder.withIndent('  ').convert({'schema_version': 1, 'workspace_root': root.path, 'clone_owned': cloned})}\n',
+      flush: true,
+    );
     _ensurePrivateProjectionIgnored(root);
-    final environmentId = newId('ENV');
     final registry = File(p.join(workspace.config.path, 'environments.json'));
-    if (!registry.existsSync()) {
+    final decoded = registry.existsSync()
+        ? jsonDecode(registry.readAsStringSync()) as Map<String, dynamic>
+        : <String, dynamic>{'schema_version': 1, 'environments': <Object?>[]};
+    final environments = (decoded['environments'] as List? ?? <Object?>[])
+        .whereType<Map>()
+        .map((item) => Map<String, Object?>.from(item))
+        .toList();
+    final existing = environments
+        .where(
+          (item) =>
+              item['name'] == request.environmentName &&
+              item['os'] == Platform.operatingSystem &&
+              item['status'] == 'active',
+        )
+        .firstOrNull;
+    final environmentId = existing?['id'] as String? ?? newId('ENV');
+    if (existing == null) {
+      environments.add({
+        'id': environmentId,
+        'name': request.environmentName,
+        'os': Platform.operatingSystem,
+        'status': 'active',
+        'capabilities': <String>['git'],
+        'registered_at': DateTime.now().toUtc().toIso8601String(),
+      });
       registry.writeAsStringSync(
-        '${const JsonEncoder.withIndent('  ').convert({
-          'schema_version': 1,
-          'environments': [
-            {'id': environmentId, 'name': request.environmentName, 'os': Platform.operatingSystem, 'status': 'active'},
-          ],
-        })}\n',
+        '${const JsonEncoder.withIndent(' ').convert({'schema_version': 1, 'environments': environments})}\n',
         flush: true,
       );
     }

@@ -50,23 +50,29 @@ void main() {
     _writeTask(workspace, _approvedTaskYaml);
     final task = projection.rebuild().single;
     final service = ControlService(workspace, projection);
-    final first = service.requestStart(task, 'OP-repeat');
-    final recovered = service.requestStart(task, 'OP-repeat');
+    final first = service.requestStart(task, 'OPR-repeat');
+    final recovered = service.requestStart(task, 'OPR-repeat');
     expect(recovered, first);
     expect(
       projection.open().select('SELECT id FROM runs WHERE operation_id = ?', [
-        'OP-repeat',
+        'OPR-repeat',
       ]),
       hasLength(1),
     );
   });
 
   test('control disposition is immutable', () {
+    _writeTask(workspace, _approvedTaskYaml);
+    final task = projection.rebuild().single;
     final service = ControlService(workspace, projection);
-    service.addDisposition('CTL-example', 'accepted');
+    service.requestStart(task, 'OPR-disposition');
+    final request = CanonicalRepository(
+      workspace,
+    ).list(EntityKind.controlRequest).single;
+    service.addDisposition(request.id, 'accepted');
     expect(
-      () => service.addDisposition('CTL-example', 'rejected'),
-      throwsA(isA<Exception>()),
+      () => service.addDisposition(request.id, 'rejected'),
+      throwsFormatException,
     );
   });
 
@@ -121,10 +127,20 @@ void main() {
     );
   });
 
-  test('authentication stays locked while provider is pending', () {
-    const gate = RepositoryAuthGate();
+  test('authentication stays locked while provider is pending', () async {
+    final gate = RepositoryAuthGate();
     expect(gate.canAcceptPassword, isFalse);
-    expect(() => gate.unlock('example-only'), throwsUnsupportedError);
+    await expectLater(
+      gate.unlock(
+        const AuthContext(
+          repositoryId: 'repo-example',
+          policyVersion: 1,
+          environmentId: 'ENV-example',
+        ),
+        'example-only',
+      ),
+      throwsA(isA<AuthUnavailable>()),
+    );
   });
 }
 
@@ -177,6 +193,7 @@ class _RecordingRunner implements RunnerAdapter {
       trace: trace,
       reviewerScore: score,
       independentReviewer: true,
+      evidence: RunnerEvidence.fixture('core-runner'),
       knowledgeIds: const ['KNW-example'],
       eventIds: const ['EVT-example'],
     );

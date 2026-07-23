@@ -33,11 +33,15 @@ checksum() {
   fi
 }
 tree_checksum() {
-  find "$1" -type f ! -name .under-claw-work-owned -print0 |
+  local listing
+  listing="$(find "$1" -type f ! -name .under-claw-work-owned -print0 |
     sort -z |
-    xargs -0 shasum -a 256 |
-    shasum -a 256 |
-    awk '{print $1}'
+    while IFS= read -r -d '' file; do checksum "$file"; done)"
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$listing" | shasum -a 256 | awk '{print $1}'
+  else
+    printf '%s' "$listing" | sha256sum | awk '{print $1}'
+  fi
 }
 
 for pair in \
@@ -140,7 +144,8 @@ install_claude_commands() {
 
 connected=0
 hermes_home="${HERMES_HOME:-$HOME/.hermes}"
-if host_detected hermes hermes "$hermes_home"; then
+if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
+  host_detected hermes hermes "$hermes_home"; then
   install_skill_tree hermes "$hermes_home"
   connected=$((connected + 1))
 fi

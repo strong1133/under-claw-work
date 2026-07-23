@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'workspace.dart';
+import 'schema_validator.dart';
 
 enum EntityKind {
   domain('DOM', 'domain'),
@@ -46,6 +47,7 @@ class CanonicalRepository {
 
   CanonicalEntity create(CanonicalEntity entity) {
     validate(entity);
+    WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
     file.parent.createSync(recursive: true);
     file.createSync(exclusive: true);
@@ -55,6 +57,7 @@ class CanonicalRepository {
 
   CanonicalEntity update(CanonicalEntity entity) {
     validate(entity);
+    WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
     if (!file.existsSync()) {
       throw StateError('Entity does not exist: ${entity.id}');
@@ -84,6 +87,8 @@ class CanonicalRepository {
     return file.existsSync() ? _read(kind, file) : null;
   }
 
+  bool exists(EntityKind kind, String id) => fileFor(kind, id).existsSync();
+
   List<CanonicalEntity> list([EntityKind? only]) {
     final kinds = only == null ? EntityKind.values : [only];
     final entities = <CanonicalEntity>[];
@@ -92,7 +97,7 @@ class CanonicalRepository {
       if (!directory.existsSync()) continue;
       for (final file
           in directory.listSync(recursive: true).whereType<File>()) {
-        if (file.path.endsWith('.yaml') || file.path.endsWith('.md')) {
+        if (_isCanonicalFile(kind, file)) {
           entities.add(_read(kind, file));
         }
       }
@@ -158,7 +163,7 @@ class CanonicalRepository {
     }
     for (final reference in references) {
       if (reference.$2 == entity.id) continue;
-      if (get(reference.$1, reference.$2) == null) {
+      if (!exists(reference.$1, reference.$2)) {
         throw FormatException(
           '${entity.id} references missing ${reference.$2}.',
         );
@@ -179,6 +184,23 @@ class CanonicalRepository {
     );
     validate(entity);
     return entity;
+  }
+
+  Map<String, Object?> readLoose(File file) {
+    final parsed = _decode(file.readAsStringSync());
+    return parsed.$1;
+  }
+
+  bool _isCanonicalFile(EntityKind kind, File file) {
+    final name = p.basename(file.path);
+    return switch (kind) {
+      EntityKind.domain => name == 'domain.md',
+      EntityKind.milestone => name == 'milestone.md',
+      EntityKind.task => name == 'task.yaml' || name.startsWith('TSK-'),
+      _ =>
+        name.startsWith('${kind.prefix}-') &&
+            (name.endsWith('.yaml') || name.endsWith('.md')),
+    };
   }
 
   (Map<String, Object?>, String) _decode(String content) {

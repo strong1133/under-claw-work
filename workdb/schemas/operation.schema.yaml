@@ -1,0 +1,12 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Operation
+type: object
+required: [schema_version, id, type, task_id, idempotency_key, status]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^OPR-[A-Za-z0-9_-]+$"}
+  type: {const: operation}
+  task_id: {type: string, pattern: "^TSK-[A-Za-z0-9_-]+$"}
+  idempotency_key: {type: string, minLength: 1}
+  status: {type: string, minLength: 1}
+additionalProperties: true

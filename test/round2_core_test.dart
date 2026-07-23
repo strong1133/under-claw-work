@@ -28,6 +28,7 @@ void main() {
           'schema_version': 1,
           'id': 'DOM-example',
           'type': 'domain',
+          'name': 'Example',
           'title': 'Example',
           'status': 'active',
         },
@@ -98,8 +99,10 @@ void main() {
         kind: EntityKind.domain,
         id: 'DOM-example',
         data: {
+          'schema_version': 1,
           'id': 'DOM-example',
           'type': 'domain',
+          'name': 'Example',
           'title': 'Example',
           'status': 'active',
         },
@@ -110,8 +113,11 @@ void main() {
         kind: EntityKind.knowledge,
         id: 'KNW-example',
         data: {
+          'schema_version': 1,
           'id': 'KNW-example',
           'type': 'knowledge',
+          'kind': 'confirmed_fact',
+          'confidence': 'confirmed',
           'scope': {
             'domain_ids': ['DOM-example'],
           },
@@ -125,7 +131,7 @@ void main() {
     final runId = ControlService(
       workspace,
       projection,
-    ).requestStart(task, 'OP-rebuild');
+    ).requestStart(task, 'OPR-rebuild');
     projection.dispose();
     workspace.database.deleteSync();
 
@@ -149,7 +155,7 @@ void main() {
       projection.open().select('SELECT operation_id FROM runs WHERE id = ?', [
         runId,
       ]).single['operation_id'],
-      'OP-rebuild',
+      'OPR-rebuild',
     );
     projection.dispose();
   });
@@ -167,6 +173,10 @@ void main() {
         File(p.join(selected.path, '.gitignore')).readAsStringSync(),
         contains('.worklog/'),
       );
+      final repeated = await SetupService().setup(
+        SetupRequest(localPath: selected.path, environmentName: 'Test desktop'),
+      );
+      expect(repeated.environmentId, result.environmentId);
       expect(
         () => SetupService().setup(
           SetupRequest(

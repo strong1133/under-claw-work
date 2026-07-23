@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'models.dart';
 import 'task_codec.dart';
 import 'workspace.dart';
+import 'schema_validator.dart';
 
 class TaskRepository {
   TaskRepository(this.workspace);
@@ -17,7 +18,13 @@ class TaskRepository {
         workspace.tasks
             .listSync(recursive: true)
             .whereType<File>()
-            .where((file) => file.path.endsWith('.yaml'))
+            .where(
+              (file) =>
+                  p.basename(file.path) == 'task.yaml' ||
+                  (p.equals(file.parent.path, workspace.tasks.path) &&
+                      p.basename(file.path).startsWith('TSK-') &&
+                      file.path.endsWith('.yaml')),
+            )
             .toList()
           ..sort((a, b) => a.path.compareTo(b.path));
     return files.map(TaskCodec.read).toList();
@@ -91,6 +98,7 @@ class TaskRepository {
   }
 
   void _validate(WorkTask task) {
+    WorklogContractValidator().validateTask(task);
     if (!task.id.startsWith('TSK-') ||
         !task.domainId.startsWith('DOM-') ||
         !task.milestoneId.startsWith('MLS-') ||
@@ -98,6 +106,19 @@ class TaskRepository {
         task.promptDraftRevision < 1 ||
         task.promptMetaSourceRevision < 0) {
       throw const FormatException('Invalid Task contract.');
+    }
+    if (task.maxGenerationDepth < 0 || task.maxGenerationDepth > 10) {
+      throw const FormatException('Generation depth must be between 0 and 10.');
+    }
+    if (task.generationDepth < 0 ||
+        task.generationDepth > task.maxGenerationDepth) {
+      throw const FormatException('Generation depth exceeds policy.');
+    }
+    if (task.createdAutomatically &&
+        (task.parentTaskId == null || task.alignedObjectiveIds.isEmpty)) {
+      throw const FormatException(
+        'Automatically generated Tasks require a parent and Objective.',
+      );
     }
     if (task.approval == PromptApproval.approved && !task.isMetaCurrent) {
       throw const FormatException('Approved Meta Prompt must be current.');

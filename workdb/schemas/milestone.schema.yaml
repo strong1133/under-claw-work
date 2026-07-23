@@ -1,0 +1,12 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Milestone
+type: object
+required: [schema_version, id, type, domain_id, title, status]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
+  type: {const: milestone}
+  domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
+  title: {type: string, minLength: 1}
+  status: {type: string, minLength: 1}
+additionalProperties: true

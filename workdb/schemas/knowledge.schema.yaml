@@ -1,0 +1,13 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Knowledge
+type: object
+required: [schema_version, id, type, kind, scope, confidence]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^KNW-[A-Za-z0-9_-]+$"}
+  type: {const: knowledge}
+  kind:
+    enum: [requirement, confirmed_fact, assumption, open_question, decision, constraint, progress, failure, procedure, handoff_summary]
+  scope: {type: object}
+  confidence: {enum: [confirmed, probable, uncertain, disputed]}
+additionalProperties: true

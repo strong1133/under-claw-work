@@ -153,6 +153,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   ProjectionStore? _projection;
   List<WorkTask> _tasks = const [];
   WorkTask? _selected;
+  EntityKind _viewKind = EntityKind.task;
+  List<CanonicalEntity> _entities = const [];
+  CanonicalEntity? _selectedEntity;
   String? _message;
 
   @override
@@ -173,6 +176,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       _projection = projection;
       _tasks = tasks;
       _selected = tasks.firstOrNull;
+      _reloadEntities();
     });
   }
 
@@ -187,7 +191,161 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     setState(() {
       _tasks = tasks;
       _selected = tasks.where((task) => task.id == _selected?.id).firstOrNull;
+      _reloadEntities();
       _message = 'SQLite projection rebuilt from Git-tracked YAML.';
+    });
+  }
+
+  void _reloadEntities() {
+    if (_root == null || _viewKind == EntityKind.task) return;
+    _entities = CanonicalRepository(Workspace(_root!))
+        .list(_viewKind)
+        .where((entity) => entity.data['status'] != 'archived')
+        .toList();
+    _selectedEntity =
+        _entities.where((item) => item.id == _selectedEntity?.id).firstOrNull ??
+        _entities.firstOrNull;
+  }
+
+  void _selectView(EntityKind kind) {
+    setState(() {
+      _viewKind = kind;
+      _reloadEntities();
+    });
+  }
+
+  Future<void> _createEntity() async {
+    final title = TextEditingController();
+    final body = TextEditingController();
+    final domainId = TextEditingController();
+    final milestoneId = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Create ${_viewKind.type}'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: title,
+                decoration: const InputDecoration(labelText: 'Title'),
+              ),
+              if (_viewKind != EntityKind.domain)
+                TextField(
+                  controller: domainId,
+                  decoration: const InputDecoration(labelText: 'Domain ID'),
+                ),
+              if (_viewKind != EntityKind.domain)
+                TextField(
+                  controller: milestoneId,
+                  decoration: const InputDecoration(
+                    labelText: 'Milestone ID (optional)',
+                  ),
+                ),
+              TextField(
+                controller: body,
+                minLines: 3,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  labelText: 'Description / AI context',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    try {
+      final created = EntityService(Workspace(_root!)).create(
+        kind: _viewKind,
+        title: title.text,
+        body: body.text,
+        domainId: domainId.text.trim().isEmpty ? null : domainId.text.trim(),
+        milestoneId: milestoneId.text.trim().isEmpty
+            ? null
+            : milestoneId.text.trim(),
+      );
+      _projection!.rebuild();
+      setState(() {
+        _reloadEntities();
+        _selectedEntity = created;
+        _message = '${created.kind.type} created · ${created.id}';
+      });
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  Future<void> _editEntity(CanonicalEntity entity) async {
+    final title = TextEditingController(
+      text: (entity.data['title'] ?? entity.data['name']).toString(),
+    );
+    final body = TextEditingController(text: entity.body);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${entity.kind.type}'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: title,
+                decoration: const InputDecoration(labelText: 'Title'),
+              ),
+              TextField(
+                controller: body,
+                minLines: 5,
+                maxLines: 12,
+                decoration: const InputDecoration(labelText: 'AI context'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    final updated = EntityService(
+      Workspace(_root!),
+    ).update(entity, title: title.text, body: body.text);
+    _projection!.rebuild();
+    setState(() {
+      _reloadEntities();
+      _selectedEntity = updated;
+      _message = '${updated.id} saved';
+    });
+  }
+
+  void _archiveEntity(CanonicalEntity entity) {
+    EntityService(Workspace(_root!)).archive(entity);
+    _projection!.rebuild();
+    setState(() {
+      _reloadEntities();
+      _message = '${entity.id} archived';
     });
   }
 
@@ -195,7 +353,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final task = _selected;
     if (task == null) return;
     try {
-      final operationId = newId('OP');
+      final operationId = newId('OPR');
       final runId = ControlService(
         Workspace(_root!),
         _projection!,
@@ -338,7 +496,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       final result = ControlService(Workspace(_root!), _projection!).request(
         task,
         command,
-        operationId: newId('OP'),
+        operationId: newId('OPR'),
         runId: command == ControlCommand.start ? null : runId,
       );
       setState(() => _message = '${command.name} requested · $result');
@@ -347,17 +505,147 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
   }
 
+  void _withdrawControl(String requestId) {
+    try {
+      ControlService(Workspace(_root!), _projection!).withdraw(requestId);
+      setState(() => _message = 'Control request withdrawn.');
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  List<TaskCandidate> _taskCandidates(WorkTask task) =>
+      TaskCandidateService(Workspace(_root!))
+          .list()
+          .where((candidate) => candidate.parentTaskId == task.id)
+          .toList()
+          .reversed
+          .toList();
+
+  void _disposeCandidate(String id, bool accept) {
+    try {
+      final service = TaskCandidateService(Workspace(_root!));
+      if (accept) {
+        final task = service.accept(id);
+        _refresh();
+        setState(() {
+          _selected = task;
+          _message = 'Candidate accepted as ${task.id}.';
+        });
+      } else {
+        service.reject(id);
+        setState(() => _message = 'Candidate rejected.');
+      }
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  Future<void> _editTaskPolicy() async {
+    final task = _selected;
+    if (task == null) return;
+    var derive = task.autoDeriveTasks;
+    var followup = task.autoFollowupTasks;
+    final depth = TextEditingController(text: '${task.maxGenerationDepth}');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Automatic Task policy'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                title: const Text('Generate derived Tasks'),
+                value: derive,
+                onChanged: (value) => setDialogState(() => derive = value),
+              ),
+              SwitchListTile(
+                title: const Text('Generate follow-up Tasks'),
+                value: followup,
+                onChanged: (value) => setDialogState(() => followup = value),
+              ),
+              TextField(
+                controller: depth,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Maximum generation depth',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    try {
+      final updated = TaskRepository(Workspace(_root!)).update(
+        task.copyWith(
+          autoDeriveTasks: derive,
+          autoFollowupTasks: followup,
+          maxGenerationDepth: int.parse(depth.text),
+        ),
+      );
+      _refresh();
+      setState(() {
+        _selected = updated;
+        _message = 'Automatic Task policy saved.';
+      });
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  List<CanonicalEntity> _controlRequests(WorkTask task) =>
+      CanonicalRepository(Workspace(_root!))
+          .list(EntityKind.controlRequest)
+          .where((request) => request.data['task_id'] == task.id)
+          .toList()
+          .reversed
+          .toList();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _root == null ? null : _createTask,
+        onPressed: _root == null
+            ? null
+            : _viewKind == EntityKind.task
+            ? _createTask
+            : _createEntity,
         icon: const Icon(Icons.add),
-        label: const Text('Task'),
+        label: Text(_viewKind == EntityKind.task ? 'Task' : _viewKind.type),
       ),
       appBar: AppBar(
         title: const Text('Under Claw Work'),
         actions: [
+          PopupMenuButton<EntityKind>(
+            key: const Key('workspace-area-menu'),
+            tooltip: 'Choose workspace area',
+            initialValue: _viewKind,
+            onSelected: _selectView,
+            itemBuilder: (context) => [
+              for (final kind in const [
+                EntityKind.domain,
+                EntityKind.milestone,
+                EntityKind.objective,
+                EntityKind.task,
+                EntityKind.knowledge,
+                EntityKind.reference,
+              ])
+                PopupMenuItem(value: kind, child: Text(kind.type)),
+            ],
+          ),
           IconButton(
             tooltip: 'Rebuild local projection',
             onPressed: _root == null ? null : _refresh,
@@ -367,6 +655,31 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       ),
       body: _root == null
           ? const Center(child: CircularProgressIndicator())
+          : _viewKind != EntityKind.task
+          ? Row(
+              children: [
+                SizedBox(
+                  width: 320,
+                  child: _GraphEntityList(
+                    entities: _entities,
+                    selected: _selectedEntity,
+                    onSelected: (entity) =>
+                        setState(() => _selectedEntity = entity),
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: _selectedEntity == null
+                      ? Center(child: Text('No ${_viewKind.type} yet'))
+                      : _GraphEntityDetail(
+                          entity: _selectedEntity!,
+                          message: _message,
+                          onEdit: () => _editEntity(_selectedEntity!),
+                          onArchive: () => _archiveEntity(_selectedEntity!),
+                        ),
+                ),
+              ],
+            )
           : Row(
               children: [
                 SizedBox(
@@ -384,15 +697,114 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                       : _TaskDetail(
                           task: _selected!,
                           message: _message,
+                          candidates: _taskCandidates(_selected!),
+                          controlRequests: _controlRequests(_selected!),
+                          dispositionFor: (requestId) => ControlService(
+                            Workspace(_root!),
+                            _projection!,
+                          ).dispositionFor(requestId),
                           onStart: _requestStart,
                           onEditDraft: () => _editPrompt(meta: false),
                           onEditMeta: () => _editPrompt(meta: true),
                           onApproveMeta: _approveMeta,
                           onControl: _requestControl,
+                          onWithdraw: _withdrawControl,
+                          onCandidateDisposition: _disposeCandidate,
+                          onEditPolicy: _editTaskPolicy,
                         ),
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _GraphEntityList extends StatelessWidget {
+  const _GraphEntityList({
+    required this.entities,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<CanonicalEntity> entities;
+  final CanonicalEntity? selected;
+  final ValueChanged<CanonicalEntity> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        for (final entity in entities)
+          ListTile(
+            selected: selected?.id == entity.id,
+            title: Text(
+              (entity.data['title'] ?? entity.data['name'] ?? entity.id)
+                  .toString(),
+            ),
+            subtitle: Text(entity.id),
+            onTap: () => onSelected(entity),
+          ),
+      ],
+    );
+  }
+}
+
+class _GraphEntityDetail extends StatelessWidget {
+  const _GraphEntityDetail({
+    required this.entity,
+    required this.message,
+    required this.onEdit,
+    required this.onArchive,
+  });
+
+  final CanonicalEntity entity;
+  final String? message;
+  final VoidCallback onEdit;
+  final VoidCallback onArchive;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(32),
+      children: [
+        Text(
+          (entity.data['title'] ?? entity.data['name'] ?? entity.id).toString(),
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
+        const SizedBox(height: 8),
+        Text('${entity.kind.type} · ${entity.id}'),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          children: [
+            Chip(label: Text((entity.data['status'] ?? 'active').toString())),
+            if (entity.data['priority'] != null)
+              Chip(label: Text('priority: ${entity.data['priority']}')),
+          ],
+        ),
+        const SizedBox(height: 24),
+        Text(
+          entity.body.isEmpty ? 'No AI context yet.' : entity.body,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 24),
+        Wrap(
+          spacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit),
+              label: const Text('Edit'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onArchive,
+              icon: const Icon(Icons.archive),
+              label: const Text('Archive'),
+            ),
+          ],
+        ),
+        if (message != null) ...[const SizedBox(height: 16), Text(message!)],
+      ],
     );
   }
 }
@@ -476,20 +888,32 @@ class _TaskDetail extends StatelessWidget {
   const _TaskDetail({
     required this.task,
     required this.message,
+    required this.candidates,
+    required this.controlRequests,
+    required this.dispositionFor,
     required this.onStart,
     required this.onEditDraft,
     required this.onEditMeta,
     required this.onApproveMeta,
     required this.onControl,
+    required this.onWithdraw,
+    required this.onCandidateDisposition,
+    required this.onEditPolicy,
   });
 
   final WorkTask task;
   final String? message;
+  final List<TaskCandidate> candidates;
+  final List<CanonicalEntity> controlRequests;
+  final CanonicalEntity? Function(String requestId) dispositionFor;
   final VoidCallback onStart;
   final VoidCallback onEditDraft;
   final VoidCallback onEditMeta;
   final VoidCallback onApproveMeta;
   final ValueChanged<ControlCommand> onControl;
+  final ValueChanged<String> onWithdraw;
+  final void Function(String id, bool accept) onCandidateDisposition;
+  final VoidCallback onEditPolicy;
 
   @override
   Widget build(BuildContext context) {
@@ -505,6 +929,16 @@ class _TaskDetail extends StatelessWidget {
           children: [
             Chip(label: Text(task.status.name)),
             Chip(label: Text('target: ${task.targetEnvironment}')),
+            Chip(
+              label: Text(
+                'derived: ${task.autoDeriveTasks ? "auto" : "manual"}',
+              ),
+            ),
+            Chip(
+              label: Text(
+                'follow-up: ${task.autoFollowupTasks ? "auto" : "manual"}',
+              ),
+            ),
             Chip(
               label: Text(
                 task.isMetaCurrent ? 'Meta approved' : 'Meta gate locked',
@@ -570,6 +1004,84 @@ class _TaskDetail extends StatelessWidget {
               ),
           ],
         ),
+        const SizedBox(height: 28),
+        Text(
+          'Control activity',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        if (controlRequests.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('No control requests.'),
+          )
+        else
+          for (final request in controlRequests)
+            Builder(
+              builder: (context) {
+                final disposition = dispositionFor(request.id);
+                final state =
+                    disposition?.data['disposition']?.toString() ?? 'pending';
+                return ListTile(
+                  key: Key('control-${request.id}'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    state == 'pending' ? Icons.schedule : Icons.task_alt,
+                  ),
+                  title: Text('${request.data['command']} · $state'),
+                  subtitle: Text(request.id),
+                  trailing: state == 'pending'
+                      ? TextButton(
+                          onPressed: () => onWithdraw(request.id),
+                          child: const Text('Withdraw request'),
+                        )
+                      : null,
+                );
+              },
+            ),
+        const SizedBox(height: 28),
+        Text(
+          'Generated Task candidates',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: onEditPolicy,
+            icon: const Icon(Icons.tune),
+            label: const Text('Edit automatic Task policy'),
+          ),
+        ),
+        if (candidates.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('No generated candidates.'),
+          )
+        else
+          for (final candidate in candidates)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(candidate.title),
+              subtitle: Text(
+                '${candidate.id} · ${candidate.disposition.name} · '
+                'depth ${candidate.depth}',
+              ),
+              trailing: candidate.disposition == CandidateDisposition.pending
+                  ? Wrap(
+                      children: [
+                        TextButton(
+                          onPressed: () =>
+                              onCandidateDisposition(candidate.id, false),
+                          child: const Text('Reject'),
+                        ),
+                        FilledButton(
+                          onPressed: () =>
+                              onCandidateDisposition(candidate.id, true),
+                          child: const Text('Accept'),
+                        ),
+                      ],
+                    )
+                  : null,
+            ),
         if (message != null) ...[const SizedBox(height: 16), Text(message!)],
       ],
     );

@@ -1,0 +1,12 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: PromptDocument
+type: object
+required: [schema_version, task_id, prompt_type, revision, created_by, created_at]
+properties:
+  schema_version: {const: 1}
+  task_id: {type: string, pattern: "^TSK-[A-Za-z0-9_-]+$"}
+  prompt_type: {enum: [draft, meta]}
+  revision: {type: integer, minimum: 1}
+  created_by: {type: object}
+  created_at: {type: string, format: date-time}
+additionalProperties: true

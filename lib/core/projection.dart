@@ -1,10 +1,8 @@
-import 'dart:io';
-
 import 'package:sqlite3/sqlite3.dart';
 
-import 'canonical_repository.dart';
 import 'models.dart';
-import 'task_codec.dart';
+import 'projection_lifecycle.dart';
+import 'task_repository.dart';
 import 'workspace.dart';
 
 class ProjectionStore {
@@ -92,168 +90,35 @@ class ProjectionStore {
   }
 
   List<WorkTask> rebuild() {
-    final database = open();
-    final files =
-        workspace.tasks
-            .listSync(recursive: true)
-            .whereType<File>()
-            .where((file) => file.path.endsWith('.yaml'))
-            .toList()
-          ..sort((a, b) => a.path.compareTo(b.path));
-    final tasks = files.map(TaskCodec.read).toList();
-    final repository = CanonicalRepository(workspace);
-    final entities = EntityKind.values
-        .where((kind) => kind != EntityKind.task)
-        .expand(repository.list)
+    dispose();
+    ProjectionLifecycle(workspace).rebuildIfNeeded(force: true);
+    open();
+    return TaskRepository(workspace).list();
+  }
+
+  List<Map<String, Object?>> searchKnowledge(String query) {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return const [];
+    return open()
+        .select(
+          '''
+          SELECT id, title, body
+          FROM canonical_entities
+          WHERE entity_type = 'knowledge'
+            AND (lower(COALESCE(title, '')) LIKE lower(?)
+              OR lower(body) LIKE lower(?))
+          ORDER BY id
+          ''',
+          ['%$normalized%', '%$normalized%'],
+        )
+        .map(
+          (row) => <String, Object?>{
+            'id': row['id'],
+            'title': row['title'],
+            'body': row['body'],
+          },
+        )
         .toList();
-    database.execute('BEGIN IMMEDIATE');
-    try {
-      database.execute('DELETE FROM tasks');
-      database.execute('DELETE FROM canonical_entities');
-      database.execute('DELETE FROM entity_relations');
-      database.execute('DELETE FROM operations');
-      database.execute('DELETE FROM control_requests');
-      database.execute('DELETE FROM control_dispositions');
-      database.execute('DELETE FROM runs');
-      database.execute('DELETE FROM skill_invocations');
-      database.execute('DELETE FROM knowledge_events');
-      final insert = database.prepare(
-        'INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)',
-      );
-      final entityInsert = database.prepare(
-        'INSERT INTO canonical_entities VALUES (?, ?, ?, ?, ?)',
-      );
-      final relationInsert = database.prepare(
-        'INSERT OR IGNORE INTO entity_relations VALUES (?, ?, ?, ?)',
-      );
-      try {
-        for (final task in tasks) {
-          insert.execute([
-            task.id,
-            task.domainId,
-            task.milestoneId,
-            task.title,
-            task.status.name,
-            task.isMetaCurrent ? 1 : 0,
-            task.targetEnvironment,
-          ]);
-          entityInsert.execute([
-            EntityKind.task.type,
-            task.id,
-            task.title,
-            task.status.name,
-            '',
-          ]);
-          for (final relation in [
-            ('domain_id', task.domainId),
-            ('milestone_id', task.milestoneId),
-          ]) {
-            relationInsert.execute([
-              EntityKind.task.type,
-              task.id,
-              relation.$1,
-              relation.$2,
-            ]);
-          }
-        }
-      } finally {
-        insert.close();
-      }
-      try {
-        for (final entity in entities) {
-          entityInsert.execute([
-            entity.kind.type,
-            entity.id,
-            entity.data['title'] ?? entity.data['name'],
-            entity.data['status'],
-            entity.body,
-          ]);
-          _insertRelations(entity, relationInsert);
-          _restoreSpecialized(entity, database);
-        }
-      } finally {
-        entityInsert.close();
-        relationInsert.close();
-      }
-      database.execute('COMMIT');
-    } catch (_) {
-      database.execute('ROLLBACK');
-      rethrow;
-    }
-    return tasks;
-  }
-
-  void _insertRelations(CanonicalEntity entity, PreparedStatement insert) {
-    void visit(String key, Object? value) {
-      if (value is Map) {
-        for (final entry in value.entries) {
-          visit(entry.key.toString(), entry.value);
-        }
-      } else if (value is List) {
-        for (final item in value) {
-          visit(key, item);
-        }
-      } else if (value is String &&
-          (key.endsWith('_id') || key.endsWith('_ids'))) {
-        insert.execute([entity.kind.type, entity.id, key, value]);
-      }
-    }
-
-    for (final entry in entity.data.entries) {
-      if (entry.key != 'id') visit(entry.key, entry.value);
-    }
-  }
-
-  void _restoreSpecialized(CanonicalEntity entity, Database database) {
-    final data = entity.data;
-    switch (entity.kind) {
-      case EntityKind.controlRequest:
-        database
-            .execute('INSERT INTO control_requests VALUES (?, ?, ?, ?, ?)', [
-              entity.id,
-              data['operation_id'],
-              data['task_id'],
-              data['command'],
-              data['requested_at'],
-            ]);
-        final reservedRunId = data['reserved_run_id'];
-        if (data['command'] == 'start' && reservedRunId is String) {
-          database.execute(
-            'INSERT OR IGNORE INTO operations VALUES (?, ?, ?)',
-            [data['operation_id'], data['task_id'], reservedRunId],
-          );
-        }
-        break;
-      case EntityKind.controlDisposition:
-        database.execute('INSERT INTO control_dispositions VALUES (?, ?, ?)', [
-          data['request_id'],
-          data['disposition'],
-          data['occurred_at'],
-        ]);
-        break;
-      case EntityKind.run:
-        database.execute('INSERT INTO runs VALUES (?, ?, ?, ?)', [
-          entity.id,
-          data['operation_id'],
-          data['task_id'],
-          data['status'],
-        ]);
-        break;
-      case EntityKind.invocation:
-        database.execute(
-          'INSERT INTO skill_invocations '
-          '(run_id, skill_id, round, sequence) VALUES (?, ?, ?, ?)',
-          [
-            data['run_id'],
-            data['skill_id'],
-            data['round'] ?? 0,
-            data['sequence'],
-          ],
-        );
-        break;
-      default:
-        break;
-    }
   }
 
   void dispose() {
