@@ -111,11 +111,9 @@ void main() {
 '''
               .replaceAll('\n', '');
       final runner = ProcessRunnerAdapter(
-        executable: Platform.isWindows
-            ? Platform.environment['COMSPEC'] ?? 'cmd.exe'
-            : '/bin/sh',
+        executable: Platform.isWindows ? 'powershell.exe' : '/bin/sh',
         arguments: Platform.isWindows
-            ? ['/d', '/s', '/c', 'echo $payload']
+            ? ['-NoProfile', '-Command', "[Console]::Out.Write('$payload')"]
             : ['-c', "printf '%s' '$payload'"],
         workingDirectory: workspace.root.path,
       );
