@@ -38,8 +38,8 @@ class ReleaseUpdateService {
       throw StateError('Release or trusted installed verifier is incomplete.');
     }
     final verified = await Process.run('bash', [
-      verifier.path,
-      release.path,
+      _bashPath(verifier.path),
+      _bashPath(release.path),
     ], runInShell: false);
     if (verified.exitCode != 0) {
       throw StateError('Release manifest verification failed.');
@@ -69,10 +69,10 @@ class ReleaseUpdateService {
     }
     final result = await Process.run(
       'bash',
-      [helper.path, ...arguments],
+      [_bashPath(helper.path), ...arguments.map(_bashPath)],
       environment: {
         ...Platform.environment,
-        'UNDER_CLAW_WORK_HOME': installRoot.path,
+        'UNDER_CLAW_WORK_HOME': _bashPath(installRoot.path),
       },
       runInShell: false,
     );
@@ -82,6 +82,16 @@ class ReleaseUpdateService {
       );
     }
     return result.stdout.toString().trim();
+  }
+
+  String _bashPath(String value) {
+    if (!Platform.isWindows) return value;
+    final normalized = value.replaceAll(r'\', '/');
+    final drivePath = RegExp(r'^([A-Za-z]):/(.*)$').firstMatch(normalized);
+    if (drivePath != null) {
+      return '/${drivePath.group(1)!.toLowerCase()}/${drivePath.group(2)!}';
+    }
+    return normalized;
   }
 
   void _requireAbsolute(Directory release) {

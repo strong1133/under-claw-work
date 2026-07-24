@@ -43,26 +43,35 @@ void main() {
       expect(result['source_revision'], 3);
       expect(result['meta_prompt'], 'META RESULT');
     },
+    skip: Platform.isWindows
+        ? 'The fake Hermes fixture is a POSIX script; production Windows uses a verified executable.'
+        : false,
   );
 
-  test('CLI adapter writes only JSON to stdout', () async {
-    final input = jsonEncode({
-      'protocol': 'under-claw-json-v1',
-      'type': 'generate_meta',
-      'task_id': 'TSK-adapter',
-      'source_revision': 1,
-      'source_sha256': 'b' * 64,
-      'draft': 'Draft',
-    });
-    final output = StringBuffer();
+  test(
+    'CLI adapter writes only JSON to stdout',
+    () async {
+      final input = jsonEncode({
+        'protocol': 'under-claw-json-v1',
+        'type': 'generate_meta',
+        'task_id': 'TSK-adapter',
+        'source_revision': 1,
+        'source_sha256': 'b' * 64,
+        'draft': 'Draft',
+      });
+      final output = StringBuffer();
 
-    await runHermesMetaPromptAdapter(
-      input: input,
-      output: output,
-      hermesExecutable: hermes.path,
-    );
+      await runHermesMetaPromptAdapter(
+        input: input,
+        output: output,
+        hermesExecutable: hermes.path,
+      );
 
-    final decoded = jsonDecode(output.toString()) as Map;
-    expect(decoded['meta_prompt'], 'META RESULT');
-  });
+      final decoded = jsonDecode(output.toString()) as Map;
+      expect(decoded['meta_prompt'], 'META RESULT');
+    },
+    skip: Platform.isWindows
+        ? 'The fake Hermes fixture is a POSIX script; production Windows uses a verified executable.'
+        : false,
+  );
 }
