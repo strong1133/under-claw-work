@@ -22,6 +22,7 @@
 | ControlRequest | `CTR-` |
 | Operation | `OPR-` |
 | SkillInvocation | `SKI-` |
+| Match | `MAT-` |
 
 ID는 중앙 DB 없이 각 환경에서 생성하며 한번 발급하면 변경하지 않는다. 기존 PT ID는 `legacy_ids`로 보존한다.
 
@@ -577,11 +578,18 @@ skill source revision과 checksum은 설치 bundle manifest에 기록한다. 특
 
 ## Environment registry
 
+경로:
+
+```text
+workdb/config/environments.yaml
+```
+
 ```yaml
 schema_version: 1
 environments:
   - id: ENV-...
-    name: JSJ MacBook
+    machine_key: MK-...
+    alias: JSJ MacBook
     os: macos
     architecture: arm64
     kind: desktop
@@ -590,11 +598,24 @@ environments:
       - gui
       - git
       - docker
+    previous_machine_keys: []
 ```
 
-환경 목록은 코드 enum이 아닌 버전 관리 registry다. Schema 검증용 enum은 registry로부터 생성한다.
+환경 목록은 코드 enum이 아닌 버전 관리 YAML registry다. Schema 검증용 enum은 registry로부터 생성한다. 규칙은 [ADR 0002](../adr/0002-environment-registry-and-matching.md)에 따른다.
+
+- `id`(ULID)와 `machine_key`(salt 해시)는 불변 식별자다. `alias`는 사용자가 수정하는 표시 이름이며 식별 키로 쓰지 않는다. `name`은 legacy 읽기 호환용으로만 남긴다.
+- 등록은 `machine_key` 기준 idempotent다. legacy name-only 레코드는 host 최초 감지 시 id를 보존한 채 1회 안전 승격한다(중복 ENV 금지).
+- salt/재설치로 `.worklog/machine.json`이 손실되면 `env-relink`로 기존 id에 새 `machine_key`를 재바인딩하고 이전 키를 `previous_machine_keys`에 남긴다.
+- registry write는 lock + atomic rename으로 lost update를 방지한다.
+- 초기 vertical slice의 `workdb/config/environments.json`은 호환 읽기만 하며 다시 쓰지 않는다(파괴적 migration 없음).
 
 ## Agent registry
+
+경로:
+
+```text
+workdb/config/agents.yaml
+```
 
 ```yaml
 schema_version: 1
@@ -605,6 +626,52 @@ agents:
     environment_id: ENV-...
     status: active
 ```
+
+Agent는 실행 Environment를 불변 `environment_id`(ENV-id)로 참조한다. 환경 alias를 rename해도 이 바인딩은 유지된다.
+
+## Match (자료매칭 provenance)
+
+Knowledge·Reference를 Domain·Milestone·Objective·Task에 연결하는 다대다 매칭을 정본 엔티티로 기록한다.
+
+경로:
+
+```text
+workdb/matches/{match_id}.yaml
+```
+
+```yaml
+schema_version: 1
+id: MAT-...
+type: match
+subject:
+  kind: knowledge   # knowledge | reference
+  id: KNW-...
+target:
+  kind: milestone   # domain | milestone | objective | task
+  id: MLS-...
+match_mode: manual  # manual | agent | hybrid
+actor:
+  actor_type: user  # user | agent
+  actor_id: user:example
+review_state: proposed  # proposed | approved | rejected | revoked
+confidence: null
+evidence: ...
+source: ...
+# 참조 무결성을 위한 정본 관계 필드
+knowledge_ids: [KNW-...]
+milestone_id: MLS-...
+history:
+  - {state: proposed, action: proposed, actor_id: user:example, at: ...}
+created_at: ...
+updated_at: ...
+```
+
+규칙:
+
+- 매칭 제안(`propose`)·승인(`approve`)·거부(`reject`)·해제(`revoke`)의 상태 전이는 `history`에 append-only로 남기고, 매 전이마다 immutable `match_reviewed` Event를 추가한다.
+- Agent 자동매칭은 `match_mode: agent`와 설명가능한 `confidence`·`evidence`를 제시하며, 정책 임계값(`autoApproveThreshold`) 이상일 때만 자동 확정하고 그 외에는 사람이 승인한다.
+- 오매칭 해제·교정은 `revoke`로 처리하고 이력을 보존한다(삭제 아님).
+- 참조는 정본 관계 필드로 검증되어 Git 정본만으로 projection을 재생성해도 유지된다.
 
 ## 관계
 

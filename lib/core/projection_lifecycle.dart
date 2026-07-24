@@ -6,7 +6,9 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
+import 'agent_registry_service.dart';
 import 'canonical_repository.dart';
+import 'environment_service.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
 
@@ -235,6 +237,32 @@ class ProjectionLifecycle {
             ]),
           );
           _restoreSpecialized(entity, database);
+        }
+        // Aggregate registries (Environment, Agent) are rebuilt from the same
+        // Git-canonical YAML so ENV-id references survive a full rebuild.
+        for (final environment in EnvironmentService(workspace).list()) {
+          entityInsert.execute([
+            'environment',
+            environment.id,
+            environment.alias,
+            environment.status,
+            '',
+          ]);
+        }
+        for (final agent in AgentRegistryService(workspace).list()) {
+          entityInsert.execute([
+            'agent',
+            agent.id,
+            agent.name,
+            agent.status,
+            '',
+          ]);
+          relationInsert.execute([
+            'agent',
+            agent.id,
+            'environment_id',
+            agent.environmentId,
+          ]);
         }
       } finally {
         taskInsert.close();

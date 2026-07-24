@@ -1,0 +1,50 @@
+schema_version: 2
+id: TSK-notion-live-client
+domain_id: DOM-under-claw-work
+milestone_id: MLS-desktop-experience
+title: "실제 NotionClient(api.notion.com) 구현체를 추가해 라이브 양방향 동기화를 가능케 한다"
+status: draft
+auto_derive_tasks: false
+auto_followup_tasks: false
+max_generation_depth: 2
+target_environment: "unassigned"
+execution_scope: multiEnvironment
+parent_task_id: null
+aligned_objective_ids: ["OBJ-multi-environment-management"]
+evidence_knowledge_ids: ["KNW-canonical-service-ui-boundary"]
+source_reference_ids: ["REF-desktop-gui-management-console"]
+generation_depth: 0
+generation_fingerprint: null
+created_automatically: false
+legacy_ids: []
+prompt:
+  draft_revision: 1
+  meta_source_revision: 0
+  approval: missing
+  draft: |-
+      P1-a 후속 정본 Task (ROUND 6b에서 P0 마감과 함께 잔여 P1으로 등록).
+
+      배경: lib/core/notion_sync_adapter.dart 는 요구5 양방향 동기화의 Core
+      계약(NotionClient 인터페이스)과 인메모리 FakeNotionClient 만 제공한다.
+      실제 api.notion.com 을 호출하는 구현체가 없어 라이브 통합은 불가능하다.
+      Git 은 여전히 단일 정본이며 Notion 은 비정본 미러라는 경계
+      (KNW-canonical-service-ui-boundary)를 유지한다.
+
+      범위:
+        - NotionClient 인터페이스를 구현하는 HttpNotionClient(가칭) 추가:
+          api.notion.com 대상 REST 호출(pages/databases/blocks), Notion-Version
+          헤더, rate-limit(429)·재시도·타임아웃 처리.
+        - 토큰은 NotionSecretStore 를 통해 호출 시점에만 transient 로 해석하고
+          어떤 형태로도(Git/SQLite/로그/픽스처) 영속하지 않는다.
+        - workspace id·host·토큰 등 어떤 실제 자격증명/식별자도 하드코딩 금지.
+
+      Acceptance criteria:
+        1. NotionClient 를 구현하는 실HTTP 클라이언트가 추가되고 FakeNotionClient
+           와 동일한 계약(메서드 시그니처/예외 타입)을 만족한다.
+        2. 자격증명은 NotionSecretStore 경유로만 접근되며 소스/테스트/로그에
+           실제 토큰·workspace id·host 하드코딩이 없다(secret_scan 통과).
+        3. 429/타임아웃/부분오류에 대한 재시도·백오프 동작이 단위테스트로 검증된다.
+        4. 기존 통과 테스트·상태전이·immutable Event 회귀 없음, flutter analyze
+           0 error / dart format clean / flutter test green 유지.
+        5. 라이브 통합 이전 필수 선행 조건임을 문서/주석에 명시한다.
+  meta: |-

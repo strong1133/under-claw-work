@@ -11,6 +11,19 @@
 - localhost 서버 없음
 - 같은 Worklog Core를 GUI와 CLI가 공유
 - Git, YAML, SQLite와 ULID는 기본 화면에서 숨김
+- 모든 텍스트는 앱에 포함된 D2Coding 16pt를 사용하고 굵기·색·행간으로 정보 위계를 표현
+- 공개적으로 관찰 가능한 Orca/Warp 계열의 dense navigation, master/detail, status 패턴을 자체 design token으로 구현
+
+## Notion 동시 관리
+
+Notion은 선택 가능한 관리 화면이지만 Git 정본을 대체하지 않는다.
+
+- Integration token은 OS secure store에만 저장하고 화면·Git·SQLite·로그에는 남기지 않는다.
+- Domain, Milestone, Objective, Task, Knowledge, Reference, Environment, Agent와 Match database ID를 local config에 연결한다.
+- 초기 버전은 사용자가 누르는 `Sync now`만 제공하며 background sync는 하지 않는다.
+- Flutter 변경은 canonical ID로 기존 Notion page를 갱신하고, Notion 변경은 Core validation과 Git commit 성공 후에만 cursor를 acknowledge한다.
+- 동시 편집은 blind overwrite하지 않고 충돌 화면에 표시한다.
+- Notion database에는 `title` property와 나머지 동기화 property를 받을 수 있는 schema가 준비돼 있어야 한다.
 
 ## 정보 구조
 

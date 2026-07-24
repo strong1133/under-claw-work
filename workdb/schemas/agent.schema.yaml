@@ -1,12 +1,20 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
 title: Agent
 type: object
-required: [schema_version, id, type, environment_id, adapter, status]
+# An Agent references the Environment it executes on by the immutable ENV id,
+# never by the editable environment alias.
+required: [schema_version, id, name, kind, environment_id, status]
 properties:
   schema_version: {const: 1}
   id: {type: string, pattern: "^AGT-[A-Za-z0-9_-]+$"}
   type: {const: agent}
+  name: {type: string, minLength: 1}
+  kind: {type: string, minLength: 1}
   environment_id: {type: string, pattern: "^ENV-[A-Za-z0-9_-]+$"}
+  # Optional execution adapter hint, retained for backward-compatible reads.
   adapter: {type: string, minLength: 1}
-  status: {type: string, minLength: 1}
+  status:
+    enum: [active, inactive, retired]
+  registered_at: {type: string}
+  updated_at: {type: string}
 additionalProperties: true

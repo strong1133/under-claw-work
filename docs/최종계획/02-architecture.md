@@ -91,11 +91,6 @@ Task에는 provider model ID 대신 필요 capability와 실행 정책을 저장
 
 ```text
 workdb/
-├─ registry/
-│  ├─ environments.yaml
-│  ├─ agents.yaml
-│  ├─ capabilities.yaml
-│  └─ relation-types.yaml
 ├─ schemas/
 ├─ domains/
 ├─ milestones/
@@ -103,13 +98,18 @@ workdb/
 ├─ tasks/
 ├─ knowledge/
 ├─ references/
+├─ matches/
 ├─ events/
 ├─ control-requests/
 ├─ control-dispositions/
 ├─ claims/
 ├─ config/
+│  ├─ environments.yaml
+│  ├─ agents.yaml
 │  ├─ repository-auth.yaml
-│  └─ skill-pipeline.yaml
+│  ├─ skill-pipeline.yaml
+│  ├─ capabilities.yaml
+│  └─ relation-types.yaml
 └─ migrations/
 
 apps/

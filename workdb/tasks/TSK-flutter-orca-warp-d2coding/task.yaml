@@ -1,0 +1,44 @@
+schema_version: 2
+id: TSK-flutter-orca-warp-d2coding
+domain_id: DOM-under-claw-work
+milestone_id: MLS-desktop-experience
+title: "Flutter GUI에 Orca/Warp 톤 테마와 D2Coding 폰트를 적용한다"
+status: draft
+auto_derive_tasks: false
+auto_followup_tasks: false
+max_generation_depth: 2
+target_environment: "unassigned"
+execution_scope: multiEnvironment
+parent_task_id: null
+aligned_objective_ids: ["OBJ-native-terminal-typography"]
+evidence_knowledge_ids: ["KNW-d2coding-ligatures"]
+source_reference_ids: ["REF-orca-warp-typography"]
+generation_depth: 0
+generation_fingerprint: null
+created_automatically: false
+legacy_ids: []
+prompt:
+  draft_revision: 1
+  meta_source_revision: 0
+  approval: missing
+  draft: |-
+      요구4 구현 Task (ROUND 4 실행 예정, 이 문서는 정본 등록용 초안).
+
+      목표: Flutter 데스크톱 GUI를 Orca/Warp 계열 터미널 미감으로 다듬고
+      D2Coding 고정폭 폰트를 코드/모노스페이스 표면에 적용한다.
+
+      기여 Objective: OBJ-native-terminal-typography
+      근거 Knowledge: KNW-d2coding-ligatures (D2Coding 번들·라이선스 근거)
+      출처 Reference: REF-orca-warp-typography (톤/타이포 지침)
+
+      Acceptance criteria:
+      1. Orca/Warp 계열 다크 톤 테마 토큰(배경/표면/텍스트/액센트)이
+         정의되고 앱 테마에 연결된다.
+      2. D2Coding 폰트 자산이 pubspec에 번들되고 코드/터미널 표면의
+         기본 fontFamily 토큰으로 노출·적용된다.
+      3. 라이트/다크 모두에서 본문 대비가 WCAG AA(4.5:1) 이상이다.
+      4. 테마/타이포 토큰에 대한 golden 또는 위젯 테스트가 추가되고
+         flutter analyze 0 error / flutter test green 을 유지한다.
+      5. 특정 OS/Agent/모델 하드코딩 없이 토큰·자산 계층에서만 구현한다.
+  meta: |-
+

@@ -1,0 +1,59 @@
+schema_version: 2
+id: TSK-release-gate-and-ui-sync-p1
+domain_id: DOM-under-claw-work
+milestone_id: MLS-desktop-experience
+title: "게이트를 release smoke까지 확장하고 UI 접근성·동기화 결합 P1을 마감한다"
+status: draft
+auto_derive_tasks: false
+auto_followup_tasks: false
+max_generation_depth: 2
+target_environment: "unassigned"
+execution_scope: multiEnvironment
+parent_task_id: null
+aligned_objective_ids:
+  - OBJ-native-terminal-typography
+  - OBJ-multi-environment-management
+evidence_knowledge_ids:
+  - KNW-d2coding-ligatures
+  - KNW-canonical-service-ui-boundary
+source_reference_ids:
+  - REF-orca-warp-typography
+  - REF-desktop-gui-management-console
+generation_depth: 0
+generation_fingerprint: null
+created_automatically: false
+legacy_ids: []
+prompt:
+  draft_revision: 1
+  meta_source_revision: 0
+  approval: missing
+  draft: |-
+      P1-d 후속 정본 Task (ROUND 6b 잔여 P1 등록).
+
+      배경: ROUND 6b 에서 font/secret 게이트가 CI(.github/workflows/ci.yml 의
+      secret-scan job)에 연결되어 PR/main push 에서 지속 실행된다. 남은 P1 은
+      게이트의 커버리지 확장과 UI 접근성·동기화 결합부 마감이다.
+
+      범위(서로 독립적이므로 하위 작업으로 쪼개도 됨):
+        A. 게이트 확장 — font_provenance_check.sh / secret_scan.sh 를 release
+           smoke 파이프라인(tool/round5_smoke.sh 또는 릴리스 워크플로)까지
+           확장해 배포 산출물 경로에서도 무결성 게이트가 걸리게 한다.
+        B. UI 접근성 P1 — Flutter focus traversal 순서 보장, WCAG 대비(AA
+           4.5:1) 자동 검증, MaterialIcons golden 안정화, 상태 표현의
+           아이콘+텍스트 병행(색상 단독 금지) 회귀 가드.
+        C. 실기기 smoke — macOS 실기기 smoke 절차를 파이프라인에 편입(현재
+           DEGRADED)해 렌더/폰트 적용을 확인한다.
+        D. 동기화 결합 P1 — Notion sidecar 동시성(경합 시 fail-closed) 및
+           ack-save 결합(acknowledge 와 canonical 쓰기의 원자 결합) 회귀 가드.
+
+      Acceptance criteria:
+        1. font/secret 게이트가 release smoke 경로에서도 실행되어 배포 산출물의
+           무결성을 검증한다(실패 시 파이프라인 중단).
+        2. focus traversal·WCAG 대비·MaterialIcons golden 에 대한 자동 테스트가
+           추가되고 flutter test 로 통과한다.
+        3. macOS 실기기 smoke 절차가 문서화·파이프라인 편입되고 결과가 기록된다.
+        4. Notion sidecar 동시성·ack-save 결합에 대한 동시성/원자성 테스트가
+           추가된다.
+        5. 기존 통과 테스트·상태전이·immutable Event·스킬순서 회귀 없음,
+           flutter analyze 0 error / dart format clean / secret_scan pass 유지.
+  meta: |-

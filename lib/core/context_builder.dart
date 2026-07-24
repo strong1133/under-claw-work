@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'canonical_repository.dart';
+import 'memory_recall_service.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
 
@@ -96,6 +97,9 @@ class ContextPackBuilder {
     ];
     final byId = {for (final entity in graphEntities) entity.id: entity};
     for (final entity in graphEntities) {
+      // Execution context packs are assembled without an interactive auth
+      // session, so restricted/secret material is never bundled into a prompt.
+      if (_isRestricted(entity)) continue;
       if (directIds.contains(entity.id)) {
         candidates.add(_fromEntity(entity, 'task.relation', 0));
       } else {
@@ -129,6 +133,22 @@ class ContextPackBuilder {
           }
         }
       }
+    }
+
+    // Cross-agent unified memory: Knowledge linked to this Task through an
+    // approved provenance Match is recalled even when it was never scoped to
+    // the Task directly. Restricted material stays excluded (no auth here).
+    final recalled = MemoryRecallService(workspace).recall(
+      domainId: task.domainId,
+      milestoneId: task.milestoneId,
+      taskId: task.id,
+    );
+    for (final item in recalled.current) {
+      if (!item.provenance.startsWith('match:')) continue;
+      final entity = byId[item.id];
+      if (entity == null || _isRestricted(entity)) continue;
+      if (candidates.any((candidate) => candidate.id == item.id)) continue;
+      candidates.add(_fromEntity(entity, item.provenance, 1));
     }
 
     final supersededIds = <String>{};
@@ -259,6 +279,11 @@ class ContextPackBuilder {
     value = right.updatedAt.compareTo(left.updatedAt);
     if (value != 0) return value;
     return left.id.compareTo(right.id);
+  }
+
+  static bool _isRestricted(CanonicalEntity entity) {
+    final visibility = entity.data['visibility'];
+    return visibility == 'restricted' || visibility == 'secret';
   }
 
   static List<String> _ids(Object? value) => switch (value) {

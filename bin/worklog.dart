@@ -13,6 +13,27 @@ Commands:
   setup <path> <environment-name> [remote]
              connect/init a user-selected Git workspace, or clone a remote
   host-list  detect Hermes, Claude Code and Codex connections
+  env-register <workspace> <alias> [kind] [capabilities-csv]
+             register this host as an environment (idempotent by machine key)
+  env-list <workspace>
+             list registered environments (id, alias, os, kind, status)
+  env-rename <workspace> <env-id> <alias>
+             edit the display alias without changing the immutable id
+  env-set-kind <workspace> <env-id> <desktop|server|headless|agent_runtime>
+  env-set-capabilities <workspace> <env-id> <capabilities-csv>
+  env-deactivate <workspace> <env-id>
+  env-activate <workspace> <env-id>
+  env-relink <workspace> <env-id>
+             re-bind an env id to this host after a salt/reinstall loss
+  agent-register <workspace> <name> <kind> <env-id>
+             register an Agent bound to an Environment by ENV id
+  agent-list <workspace>
+  match-propose <workspace> <subject-id> <target-id> <actor-type> <actor-id>
+             [mode] [confidence] [evidence]
+             link a Knowledge/Reference to a Domain/Milestone/Objective/Task
+  match-approve|match-reject|match-revoke <workspace> <match-id>
+             <actor-type> <actor-id> [reason]
+  match-list <workspace>
   init       create the portable workspace layout and local SQLite projection
   task-list  rebuild the projection and list tasks
   entity-list <workspace> [kind]
@@ -24,6 +45,8 @@ Commands:
   graph-validate <workspace>
   knowledge-search <workspace> <query>
   context-build <workspace> <task-id> [token-budget]
+  memory-recall <workspace> <domain|milestone|task> <scope-id>
+             cross-agent unified recall (restricted material excluded on CLI)
   task-create <workspace> <domain-id> <milestone-id> <title> <environment-id>
   task-policy <workspace> <task-id> <derive:true|false> <followup:true|false> <depth>
   task-candidate-propose <workspace> <parent-task-id> <title> <draft-file>
@@ -92,6 +115,176 @@ Commands:
           stdout.writeln(
             '${task.id}\t${task.status.name}\t${task.title}\t'
             'meta=${task.isMetaCurrent ? "ready" : "locked"}',
+          );
+        }
+      case 'env-register':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'env-register requires workspace and alias.',
+          );
+        }
+        List<String> csv(String value) => value
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList();
+        final record = EnvironmentService(workspace).register(
+          identity: EnvironmentIdentity.detect(workspace),
+          alias: arguments[2],
+          kind: arguments.length > 3 ? arguments[3] : 'desktop',
+          capabilities: arguments.length > 4
+              ? csv(arguments[4])
+              : const ['git'],
+        );
+        stdout.writeln(
+          '${record.id}\t${record.alias}\t${record.os}\t${record.kind}\t'
+          '${record.status}',
+        );
+      case 'env-list':
+        for (final record in EnvironmentService(workspace).list()) {
+          stdout.writeln(
+            '${record.id}\t${record.alias}\t${record.os}\t'
+            '${record.architecture}\t${record.kind}\t${record.status}\t'
+            'caps=${record.capabilities.join(",")}',
+          );
+        }
+      case 'env-rename':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'env-rename requires workspace, env id and alias.',
+          );
+        }
+        final record = EnvironmentService(
+          workspace,
+        ).rename(arguments[2], arguments[3]);
+        stdout.writeln('${record.id}\t${record.alias}');
+      case 'env-set-kind':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'env-set-kind requires workspace, env id and kind.',
+          );
+        }
+        final record = EnvironmentService(
+          workspace,
+        ).setKind(arguments[2], arguments[3]);
+        stdout.writeln('${record.id}\t${record.kind}');
+      case 'env-set-capabilities':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'env-set-capabilities requires workspace, env id and CSV.',
+          );
+        }
+        final record = EnvironmentService(workspace).setCapabilities(
+          arguments[2],
+          arguments[3]
+              .split(',')
+              .map((item) => item.trim())
+              .where((item) => item.isNotEmpty)
+              .toList(),
+        );
+        stdout.writeln('${record.id}\tcaps=${record.capabilities.join(",")}');
+      case 'env-deactivate':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'env-deactivate requires workspace and env id.',
+          );
+        }
+        final record = EnvironmentService(workspace).deactivate(arguments[2]);
+        stdout.writeln('${record.id}\t${record.status}');
+      case 'env-activate':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'env-activate requires workspace and env id.',
+          );
+        }
+        final record = EnvironmentService(workspace).activate(arguments[2]);
+        stdout.writeln('${record.id}\t${record.status}');
+      case 'env-relink':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'env-relink requires workspace and env id.',
+          );
+        }
+        final record = EnvironmentService(
+          workspace,
+        ).relink(arguments[2], EnvironmentIdentity.detect(workspace));
+        stdout.writeln('${record.id}\t${record.machineKey}');
+      case 'agent-register':
+        if (arguments.length < 5) {
+          throw const FormatException(
+            'agent-register requires workspace, name, kind and env id.',
+          );
+        }
+        final record = AgentRegistryService(workspace).register(
+          name: arguments[2],
+          kind: arguments[3],
+          environmentId: arguments[4],
+        );
+        stdout.writeln('${record.id}\t${record.name}\t${record.environmentId}');
+      case 'agent-list':
+        for (final record in AgentRegistryService(workspace).list()) {
+          stdout.writeln(
+            '${record.id}\t${record.name}\t${record.kind}\t'
+            '${record.environmentId}\t${record.status}',
+          );
+        }
+      case 'match-propose':
+        if (arguments.length < 6) {
+          throw const FormatException(
+            'match-propose requires workspace, subject id, target id, '
+            'actor-type and actor-id [mode] [confidence] [evidence].',
+          );
+        }
+        final record = MatchService(workspace).propose(
+          subjectId: arguments[2],
+          targetId: arguments[3],
+          actorType: arguments[4],
+          actorId: arguments[5],
+          mode: arguments.length > 6 ? arguments[6] : 'manual',
+          confidence: arguments.length > 7 ? num.tryParse(arguments[7]) : null,
+          evidence: arguments.length > 8 ? arguments[8] : '',
+        );
+        projection.rebuild();
+        stdout.writeln('${record.id}\t${record.reviewState}');
+      case 'match-approve' || 'match-reject' || 'match-revoke':
+        if (arguments.length < 5) {
+          throw FormatException(
+            '${arguments.first} requires workspace, match id, actor-type '
+            'and actor-id [reason].',
+          );
+        }
+        final service = MatchService(workspace);
+        final id = arguments[2];
+        final actorType = arguments[3];
+        final actorId = arguments[4];
+        final reason = arguments.length > 5 ? arguments[5] : null;
+        final record = switch (arguments.first) {
+          'match-approve' => service.approve(
+            id,
+            actorType: actorType,
+            actorId: actorId,
+            reason: reason,
+          ),
+          'match-reject' => service.reject(
+            id,
+            actorType: actorType,
+            actorId: actorId,
+            reason: reason,
+          ),
+          _ => service.revoke(
+            id,
+            actorType: actorType,
+            actorId: actorId,
+            reason: reason,
+          ),
+        };
+        projection.rebuild();
+        stdout.writeln('${record.id}\t${record.reviewState}');
+      case 'match-list':
+        for (final record in MatchService(workspace).list()) {
+          stdout.writeln(
+            '${record.id}\t${record.subjectId}\t${record.targetId}\t'
+            '${record.matchMode}\t${record.reviewState}',
           );
         }
       case 'entity-list':
@@ -213,6 +406,37 @@ Commands:
             'context=${entry.id}\tprovenance=${entry.provenance}\t'
             'distance=${entry.relationDistance}\t'
             'contradictions=${entry.contradictionIds.join(",")}',
+          );
+        }
+      case 'memory-recall':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'memory-recall requires workspace, scope-kind '
+            '(domain|milestone|task) and scope-id.',
+          );
+        }
+        projection.rebuild();
+        final scopeKind = arguments[2];
+        final scopeId = arguments[3];
+        // The CLI has no interactive auth session, so restricted/secret
+        // Knowledge is always excluded here (fails closed).
+        final recall = MemoryRecallService(workspace).recall(
+          domainId: scopeKind == 'domain' ? scopeId : null,
+          milestoneId: scopeKind == 'milestone' ? scopeId : null,
+          taskId: scopeKind == 'task' ? scopeId : null,
+        );
+        stdout.writeln(
+          'actors=${(recall.contributingActors.toList()..sort()).join(",")}',
+        );
+        for (final item in recall.current) {
+          stdout.writeln(
+            'current=${item.id}\tactor=${item.actorId}\t'
+            'provenance=${item.provenance}\ttitle=${item.title}',
+          );
+        }
+        for (final item in recall.superseded) {
+          stdout.writeln(
+            'superseded=${item.id}\tby=${item.supersededBy.join(",")}',
           );
         }
       case 'task-create':

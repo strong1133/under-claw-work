@@ -1,0 +1,47 @@
+schema_version: 2
+id: TSK-d2coding-bold-provenance
+domain_id: DOM-under-claw-work
+milestone_id: MLS-desktop-experience
+title: "D2Coding Bold face를 upstream v1.3.2 릴리스 hash 원본 대조로 신원 승격한다"
+status: draft
+auto_derive_tasks: false
+auto_followup_tasks: false
+max_generation_depth: 2
+target_environment: "unassigned"
+execution_scope: multiEnvironment
+parent_task_id: null
+aligned_objective_ids: ["OBJ-native-terminal-typography"]
+evidence_knowledge_ids: ["KNW-d2coding-ligatures"]
+source_reference_ids: ["REF-orca-warp-typography"]
+generation_depth: 0
+generation_fingerprint: null
+created_automatically: false
+legacy_ids: []
+prompt:
+  draft_revision: 1
+  meta_source_revision: 0
+  approval: missing
+  draft: |-
+      P1-c 후속 정본 Task (ROUND 6b 잔여 P1 등록).
+
+      배경: assets/fonts/PROVENANCE.md 기준, D2Coding.ttf(Regular)는 형제
+      저장소와 byte-identical SHA-256 으로 신원이 앵커되어 있으나,
+      D2Coding-Bold.ttf 는 형제 저장소가 Regular 만 추적하여 자체 기록 hash 와
+      name 테이블로만 신원이 잡혀 있다(원본 릴리스 대조 미완).
+
+      범위:
+        - naver/d2codingfont v1.3.2(Build 20180524) 공식 릴리스의 Bold face
+          원본과 hash 대조로 D2Coding-Bold.ttf 신원을 승격한다.
+        - PROVENANCE.md 에 대조 근거(릴리스 URL·원본 hash·대조 방법)를 정직히
+          기록하고, font_provenance_check.sh 의 기대 hash 와 정합을 유지한다.
+        - 바이너리 다운로드/커밋은 승인·정책 준수 하에서만 수행한다(무단
+          외부 바이너리 반입 금지 원칙 준수).
+
+      Acceptance criteria:
+        1. D2Coding-Bold.ttf 가 upstream v1.3.2 릴리스 원본과 hash 대조로
+           확인되고 그 근거가 PROVENANCE.md 에 기록된다.
+        2. tool/font_provenance_check.sh 가 여전히 통과하고 CI secret-scan job
+           게이트와 정합한다.
+        3. name 테이블/OFL 귀속 서술의 정확성이 유지된다.
+        4. secret_scan pass 및 기존 테스트 회귀 없음.
+  meta: |-

@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'id.dart';
+import 'environment_service.dart';
 import 'projection.dart';
 import 'workspace.dart';
 
@@ -60,37 +60,15 @@ class SetupService {
       flush: true,
     );
     _ensurePrivateProjectionIgnored(root);
-    final registry = File(p.join(workspace.config.path, 'environments.json'));
-    final decoded = registry.existsSync()
-        ? jsonDecode(registry.readAsStringSync()) as Map<String, dynamic>
-        : <String, dynamic>{'schema_version': 1, 'environments': <Object?>[]};
-    final environments = (decoded['environments'] as List? ?? <Object?>[])
-        .whereType<Map>()
-        .map((item) => Map<String, Object?>.from(item))
-        .toList();
-    final existing = environments
-        .where(
-          (item) =>
-              item['name'] == request.environmentName &&
-              item['os'] == Platform.operatingSystem &&
-              item['status'] == 'active',
-        )
-        .firstOrNull;
-    final environmentId = existing?['id'] as String? ?? newId('ENV');
-    if (existing == null) {
-      environments.add({
-        'id': environmentId,
-        'name': request.environmentName,
-        'os': Platform.operatingSystem,
-        'status': 'active',
-        'capabilities': <String>['git'],
-        'registered_at': DateTime.now().toUtc().toIso8601String(),
-      });
-      registry.writeAsStringSync(
-        '${const JsonEncoder.withIndent(' ').convert({'schema_version': 1, 'environments': environments})}\n',
-        flush: true,
-      );
-    }
+    // Identity is keyed on the immutable machine key, never on the editable
+    // alias, so re-running setup on the same host reuses the same ENV id even
+    // if the environment has since been renamed.
+    final environments = EnvironmentService(workspace);
+    final record = environments.register(
+      identity: EnvironmentIdentity.detect(workspace),
+      alias: request.environmentName,
+    );
+    final environmentId = record.id;
     final projection = ProjectionStore(workspace);
     try {
       projection.rebuild();

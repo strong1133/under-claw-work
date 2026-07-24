@@ -140,6 +140,29 @@ class GitSyncService {
     return (await _run(['rev-parse', 'HEAD'])).stdout.toString().trim();
   }
 
+  /// Commits the current canonical `workdb` changes to the local repository
+  /// (no push) and returns the resulting HEAD commit hash. This is the durable
+  /// Git write an inbound-reconcile path binds its acknowledge to: if there is
+  /// nothing staged, or `git add`/`git commit` fails (e.g. a broken repo state),
+  /// this throws so the caller never acknowledges an edit that was not durably
+  /// persisted. Used by the Notion inbound loop, which must not advance its
+  /// cursor until the merged edit is committed to Git.
+  Future<String> commitCanonical({required String message}) async {
+    await _checked(['add', '--', 'workdb']);
+    final staged = await _run([
+      'diff',
+      '--cached',
+      '--quiet',
+    ], allowFailure: true);
+    if (staged.exitCode == 0) {
+      throw StateError('NOTHING_TO_COMMIT: no canonical changes to persist.');
+    } else if (staged.exitCode != 1) {
+      throw ProcessException('git', const ['diff', '--cached', '--quiet']);
+    }
+    await _checked(['commit', '-m', message]);
+    return (await _run(['rev-parse', 'HEAD'])).stdout.toString().trim();
+  }
+
   Future<void> _checked(List<String> arguments) async {
     final result = await _run(arguments, allowFailure: true);
     if (result.exitCode != 0) {

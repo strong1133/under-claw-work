@@ -19,7 +19,8 @@ enum EntityKind {
   run('RUN', 'run'),
   invocation('SKI', 'skill_invocation'),
   controlRequest('CTR', 'control_request'),
-  controlDisposition('EVT', 'control_disposition');
+  controlDisposition('EVT', 'control_disposition'),
+  match('MAT', 'match');
 
   const EntityKind(this.prefix, this.type);
   final String prefix;
@@ -246,6 +247,7 @@ class CanonicalRepository {
     EntityKind.invocation => workspace.invocations,
     EntityKind.controlRequest => workspace.controls,
     EntityKind.controlDisposition => workspace.controlDispositions,
+    EntityKind.match => workspace.matches,
   };
 
   static const _markdownKinds = {

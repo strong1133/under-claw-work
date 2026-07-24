@@ -1,5 +1,7 @@
+import 'agent_registry_service.dart';
 import 'canonical_repository.dart';
 import 'context_builder.dart';
+import 'environment_service.dart';
 import 'id.dart';
 import 'relation_registry.dart';
 import 'task_repository.dart';
@@ -179,6 +181,11 @@ class EntityService {
     }
     _validateTaskDependencyCycles();
     RelationRegistry(workspace).validateGraph();
+    // Aggregate registries are validated on the same whole-graph pass so the
+    // Environment/Agent contracts and the Environment ↔ Agent link are part of
+    // the runtime acceptance boundary, not just portable documentation.
+    EnvironmentService(workspace).validateAll();
+    AgentRegistryService(workspace).validateAll();
   }
 
   ExecutionContextPack buildExecutionContext(

@@ -21,6 +21,7 @@ class Workspace {
       Directory(p.join(workdb.path, 'control-dispositions'));
   Directory get runs => Directory(p.join(workdb.path, 'runs'));
   Directory get invocations => Directory(p.join(workdb.path, 'invocations'));
+  Directory get matches => Directory(p.join(workdb.path, 'matches'));
   Directory get config => Directory(p.join(workdb.path, 'config'));
   Directory get candidates => Directory(p.join(workdb.path, 'task-candidates'));
   Directory get migrations => Directory(p.join(local.path, 'migrations'));
@@ -44,6 +45,7 @@ class Workspace {
       controlDispositions,
       runs,
       invocations,
+      matches,
       config,
       candidates,
       local,

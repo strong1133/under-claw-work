@@ -42,6 +42,10 @@ credentials.json
 /build/
 /coverage/
 
+# Golden test failure artifacts (regenerated on every failing run); the
+# committed goldens under test/**/goldens/ are kept, these diffs are not.
+**/failures/
+
 # Symbolication related
 app.*.symbols
 

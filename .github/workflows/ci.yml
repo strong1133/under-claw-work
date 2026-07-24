@@ -52,3 +52,4 @@ jobs:
         with:
           fetch-depth: 0
       - run: bash tool/secret_scan.sh
+      - run: bash tool/font_provenance_check.sh

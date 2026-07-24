@@ -1,8 +1,19 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'core/worklog_core.dart';
+import 'ui/agent_screen.dart';
+import 'ui/app_theme.dart';
+import 'ui/environment_screen.dart';
+import 'ui/match_screen.dart';
+import 'ui/memory_screen.dart';
+import 'ui/notion_screens.dart';
+import 'ui/notion_sync_port.dart';
+import 'ui/workspace_shell.dart';
 
 void main() {
   runApp(const UnderClawWorkApp());
@@ -18,16 +29,14 @@ class UnderClawWorkApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Under Claw Work',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff315c53),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
+      // Orca/Warp-inspired dark shell by default, with a light counterpart; both
+      // are pure functions of the token layer (see lib/ui/app_theme.dart).
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.dark,
       home: workspaceOverride == null
           ? const SetupScreen()
-          : WorkspaceScreen(workspaceOverride: workspaceOverride),
+          : WorkspaceComposition(workspaceRoot: workspaceOverride!),
     );
   }
 }
@@ -81,7 +90,7 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget build(BuildContext context) {
     final workspace = _workspace;
     if (workspace != null) {
-      return WorkspaceScreen(workspaceOverride: workspace);
+      return WorkspaceComposition(workspaceRoot: workspace);
     }
     return Scaffold(
       appBar: AppBar(title: const Text('Under Claw Work setup')),
@@ -136,6 +145,231 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ),
     );
+  }
+}
+
+class WorkspaceComposition extends StatefulWidget {
+  const WorkspaceComposition({super.key, required this.workspaceRoot});
+
+  final Directory workspaceRoot;
+
+  @override
+  State<WorkspaceComposition> createState() => _WorkspaceCompositionState();
+}
+
+class _WorkspaceCompositionState extends State<WorkspaceComposition> {
+  late final http.Client _httpClient;
+  late final PlatformNotionSecretStore _secretStore;
+  late final NotionSyncCoordinator _coordinator;
+  late final _NotionControllerAdapter _notion;
+
+  @override
+  void initState() {
+    super.initState();
+    final workspace = Workspace(widget.workspaceRoot);
+    _httpClient = http.Client();
+    _secretStore = const PlatformNotionSecretStore();
+    _coordinator = NotionSyncCoordinator(
+      workspace: workspace,
+      client: NotionApiClient(httpClient: _httpClient),
+      secretStore: _secretStore,
+      configStore: NotionLocalConfigStore(
+        File('${workspace.local.path}/notion-config.json'),
+      ),
+      commitCanonical: () => GitSyncService(
+        workspace,
+      ).commitCanonical(message: 'worklog: reconcile Notion mirror'),
+    );
+    _notion = _NotionControllerAdapter(
+      coordinator: _coordinator,
+      secretStore: _secretStore,
+    );
+  }
+
+  @override
+  void dispose() {
+    _notion.dispose();
+    _coordinator.dispose();
+    _httpClient.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => UnifiedWorkspaceShell(
+    destinations: [
+      WorkspaceDestination(
+        label: 'Work',
+        icon: Icons.account_tree_outlined,
+        child: WorkspaceScreen(workspaceOverride: widget.workspaceRoot),
+      ),
+      WorkspaceDestination(
+        label: 'Environments',
+        icon: Icons.dns_outlined,
+        child: EnvironmentManagementScreen(workspaceRoot: widget.workspaceRoot),
+      ),
+      WorkspaceDestination(
+        label: 'Agents',
+        icon: Icons.smart_toy_outlined,
+        child: AgentManagementScreen(workspaceRoot: widget.workspaceRoot),
+      ),
+      WorkspaceDestination(
+        label: 'Matches',
+        icon: Icons.rule_outlined,
+        child: MatchReviewScreen(workspaceRoot: widget.workspaceRoot),
+      ),
+      WorkspaceDestination(
+        label: 'Memory',
+        icon: Icons.history_edu_outlined,
+        child: MemoryRecallScreen(workspaceRoot: widget.workspaceRoot),
+      ),
+      WorkspaceDestination(
+        label: 'Notion setup',
+        icon: Icons.settings_outlined,
+        child: NotionSetupView(controller: _notion),
+      ),
+      WorkspaceDestination(
+        label: 'Notion sync',
+        icon: Icons.sync_outlined,
+        child: NotionSyncView(controller: _notion),
+      ),
+      WorkspaceDestination(
+        label: 'Conflicts',
+        icon: Icons.merge_type,
+        child: NotionConflictViewScreen(controller: _notion),
+      ),
+    ],
+  );
+}
+
+class _NotionControllerAdapter implements NotionUiController {
+  _NotionControllerAdapter({
+    required this.coordinator,
+    required this.secretStore,
+  }) {
+    _subscription = coordinator.watchStatus().listen(_onCoreStatus);
+  }
+
+  final NotionSyncCoordinator coordinator;
+  final NotionSecretStore secretStore;
+  final ValueNotifier<NotionSyncViewState> _state = ValueNotifier(
+    const NotionSyncViewState(),
+  );
+  late final StreamSubscription<NotionSyncStatus> _subscription;
+
+  @override
+  ValueListenable<NotionSyncViewState> get state => _state;
+
+  @override
+  Future<void> connect(NotionConnectionDraft draft) async {
+    final ref = NotionSecretRef(draft.secretLocator);
+    _state.value = const NotionSyncViewState(
+      status: NotionConnectionStatus.connecting,
+      message: 'Testing Notion connection…',
+    );
+    try {
+      await secretStore.writeToken(ref, draft.token);
+      await coordinator.connect(
+        NotionLocalConfig(
+          enabled: true,
+          secretRef: ref,
+          databases: draft.databaseIds,
+        ),
+      );
+      _state.value = const NotionSyncViewState(
+        status: NotionConnectionStatus.connected,
+        message: 'Notion connection is ready.',
+      );
+    } on Object catch (error) {
+      _state.value = NotionSyncViewState(
+        status: NotionConnectionStatus.error,
+        message: '$error',
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> syncNow() async {
+    _state.value = NotionSyncViewState(
+      status: NotionConnectionStatus.syncing,
+      message: 'Synchronizing Git canonical data with Notion…',
+      lastSyncedAt: _state.value.lastSyncedAt,
+    );
+    try {
+      final pushed = await coordinator.pushCanonical();
+      final pulled = await coordinator.pullAndCommit();
+      _state.value = NotionSyncViewState(
+        status: NotionConnectionStatus.connected,
+        message: 'Notion mirror synchronized.',
+        lastSyncedAt: DateTime.now(),
+        pushed: pushed.pushed,
+        pulled: pulled.pulled,
+      );
+    } on NotionConflict catch (error) {
+      _state.value = NotionSyncViewState(
+        status: NotionConnectionStatus.error,
+        message: 'A Notion conflict requires review.',
+        conflicts: [
+          NotionConflictView(
+            canonicalId: error.canonicalId,
+            title: 'Concurrent Notion edit',
+            gitValue: 'Git canonical value',
+            notionValue: 'Notion revision ${error.remoteRevision}',
+          ),
+        ],
+      );
+    } on Object catch (error) {
+      _state.value = NotionSyncViewState(
+        status: NotionConnectionStatus.error,
+        message: '$error',
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> resolveConflict(
+    String canonicalId,
+    NotionConflictChoice choice,
+  ) async {
+    if (choice == NotionConflictChoice.postpone) return;
+    // Resolution is deliberately routed back through the same coordinator:
+    // Git remains canonical for keepGit; applyNotion re-runs validated inbound
+    // reconciliation and commit-before-ack.
+    if (choice == NotionConflictChoice.keepGit) {
+      await coordinator.resolveKeepGit(canonicalId);
+    } else {
+      await coordinator.pullAndCommit();
+    }
+    _state.value = NotionSyncViewState(
+      status: NotionConnectionStatus.connected,
+      message: 'Conflict resolution completed for $canonicalId.',
+      lastSyncedAt: DateTime.now(),
+    );
+  }
+
+  void _onCoreStatus(NotionSyncStatus status) {
+    if (status.phase == NotionSyncPhase.conflict) return;
+    final mapped = switch (status.phase) {
+      NotionSyncPhase.connecting => NotionConnectionStatus.connecting,
+      NotionSyncPhase.pushing ||
+      NotionSyncPhase.pulling => NotionConnectionStatus.syncing,
+      NotionSyncPhase.failed => NotionConnectionStatus.error,
+      _ => NotionConnectionStatus.connected,
+    };
+    _state.value = NotionSyncViewState(
+      status: mapped,
+      message: status.message ?? _state.value.message,
+      lastSyncedAt: _state.value.lastSyncedAt,
+      pushed: _state.value.pushed,
+      pulled: _state.value.pulled,
+      conflicts: _state.value.conflicts,
+    );
+  }
+
+  void dispose() {
+    _subscription.cancel();
+    _state.dispose();
   }
 }
 
@@ -645,6 +879,52 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               ])
                 PopupMenuItem(value: kind, child: Text(kind.type)),
             ],
+          ),
+          IconButton(
+            tooltip: 'Manage environments',
+            onPressed: _root == null
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          EnvironmentManagementScreen(workspaceRoot: _root!),
+                    ),
+                  ),
+            icon: const Icon(Icons.dns_outlined),
+          ),
+          IconButton(
+            tooltip: 'Manage agents',
+            onPressed: _root == null
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          AgentManagementScreen(workspaceRoot: _root!),
+                    ),
+                  ),
+            icon: const Icon(Icons.smart_toy_outlined),
+          ),
+          IconButton(
+            tooltip: 'Review matches',
+            onPressed: _root == null
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => MatchReviewScreen(workspaceRoot: _root!),
+                    ),
+                  ),
+            icon: const Icon(Icons.rule_outlined),
+          ),
+          IconButton(
+            tooltip: 'Recall memory',
+            onPressed: _root == null
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => MemoryRecallScreen(workspaceRoot: _root!),
+                    ),
+                  ),
+            icon: const Icon(Icons.history_edu_outlined),
           ),
           IconButton(
             tooltip: 'Rebuild local projection',

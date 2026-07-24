@@ -1,0 +1,6 @@
+objective_ids:
+  - OBJ-multi-environment-management
+knowledge_ids:
+  - KNW-canonical-service-ui-boundary
+reference_ids:
+  - REF-desktop-gui-management-console

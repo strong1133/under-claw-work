@@ -35,6 +35,8 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   crypto: ^3.0.7
+  flutter_secure_storage: ^10.3.1
+  http: ^1.6.0
   path: ^1.9.1
   path_provider: ^2.1.5
   sqlite3: ^3.1.6
@@ -61,6 +63,22 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # OFL-licensed D2Coding faces + the licence text ship as assets (requirement
+  # 4). OFL.txt is bundled beside the faces to satisfy the licence's
+  # redistribution terms.
+  assets:
+    - assets/fonts/OFL.txt
+
+  # D2Coding fixed-width family for code/terminal/id surfaces. Detection +
+  # fallback lives in lib/ui/font_detection.dart; this declaration is what makes
+  # the bundled face resolvable at runtime.
+  fonts:
+    - family: D2Coding
+      fonts:
+        - asset: assets/fonts/D2Coding.ttf
+        - asset: assets/fonts/D2Coding-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:
