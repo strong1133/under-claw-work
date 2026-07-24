@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'models.dart';
@@ -11,6 +13,9 @@ class TaskRepository {
   TaskRepository(this.workspace);
 
   final Workspace workspace;
+
+  static String draftSha256(String draft) =>
+      sha256.convert(utf8.encode(draft)).toString();
 
   List<WorkTask> list() {
     workspace.ensureLayout();
@@ -68,6 +73,7 @@ class TaskRepository {
       task.copyWith(
         promptMeta: meta,
         promptMetaSourceRevision: task.promptDraftRevision,
+        promptMetaSourceSha256: draftSha256(task.promptDraft),
         approval: PromptApproval.pending,
       ),
     );
@@ -75,7 +81,8 @@ class TaskRepository {
 
   WorkTask approveMeta(WorkTask task) {
     if (task.promptMeta.isEmpty ||
-        task.promptMetaSourceRevision != task.promptDraftRevision) {
+        task.promptMetaSourceRevision != task.promptDraftRevision ||
+        task.promptMetaSourceSha256 != draftSha256(task.promptDraft)) {
       throw StateError(
         'Only a Meta Prompt for the current Draft is approvable.',
       );
@@ -104,7 +111,9 @@ class TaskRepository {
         !task.milestoneId.startsWith('MLS-') ||
         task.title.trim().isEmpty ||
         task.promptDraftRevision < 1 ||
-        task.promptMetaSourceRevision < 0) {
+        task.promptMetaSourceRevision < 0 ||
+        (task.promptMetaSourceSha256.isNotEmpty &&
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(task.promptMetaSourceSha256))) {
       throw const FormatException('Invalid Task contract.');
     }
     if (task.maxGenerationDepth < 0 || task.maxGenerationDepth > 10) {

@@ -23,6 +23,9 @@ It provides:
 - Git YAML/Markdown canonical storage and rebuildable SQLite projection;
 - optional Notion mirroring;
 - runtime adapters that remain fail-closed until verified.
+- cross-host automatic Meta generation with Git-ref claim leases;
+- post-commit FCM and Hermes/Discord notifications with a retry outbox;
+- manifest-verified runtime update and rollback.
 
 ## Included skills
 
@@ -53,11 +56,16 @@ worklog task-list <workspace>
 worklog task-create <workspace> <domain> <milestone> <title> <environment>
 worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
 worklog meta-generate <workspace> <task-id> <adapter-id>
+worklog auto-meta-next <workspace> <environment-id> <adapter-id>
+worklog notification-register <workspace> <local-config-json>
+worklog notification-list <workspace>
 worklog memory-recall <workspace> <domain|milestone|task> <scope-id>
 worklog context-build <workspace> <task>
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
 worklog runtime-list <workspace>
 worklog git-sync <workspace> [commit-message]
+worklog update-check|update-apply <extracted-release-directory>
+worklog update-rollback
 ```
 
 If the user asks to perform one of these operations, inspect the workspace and

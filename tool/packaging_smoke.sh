@@ -142,9 +142,18 @@ printf '%s\n' 'smoke-v2' > "$updated/app/.under-claw-app-health"
 printf '%s\n' 'skill payload v2' \
   > "$updated/bundled-skills/upstream/SMOKE-VERSION.txt"
 printf '%s\n' 'packaging payload v2' > "$updated/packaging/SMOKE-VERSION.txt"
+verifier_marker="$temp/candidate-verifier-executed"
+printf '%s\n' '#!/usr/bin/env bash' "touch '$verifier_marker'" \
+  "exec bash '$release/packaging/verify-release.sh' \"\$@\"" \
+  > "$updated/packaging/verify-release.sh"
+chmod 0755 "$updated/packaging/verify-release.sh"
 refresh_manifest "$updated"
 
-bash "$release/packaging/update.sh" "$updated"
+bash "$UNDER_CLAW_WORK_HOME/packaging/update.sh" "$updated"
+[[ ! -e "$verifier_marker" ]] || {
+  echo "Candidate verifier executed before installation" >&2
+  exit 1
+}
 [[ "$(cat "$UNDER_CLAW_WORK_HOME/user-owned.txt")" == preserve ]]
 [[ "$(cat "$UNDER_CLAW_WORK_HOME/RELEASE-VERSION.txt")" == smoke-v2 ]]
 [[ "$(cat "$UNDER_CLAW_WORK_HOME/app/.under-claw-app-health")" == smoke-v2 ]]
@@ -159,10 +168,23 @@ fi
 [[ -f "$UNDER_CLAW_WORK_HOME/bundled-skills/upstream/SMOKE-VERSION.txt" ]]
 [[ -f "$UNDER_CLAW_WORK_HOME/packaging/SMOKE-VERSION.txt" ]]
 
+bash "$UNDER_CLAW_WORK_HOME/packaging/rollback.sh"
+[[ "$(cat "$UNDER_CLAW_WORK_HOME/RELEASE-VERSION.txt")" != smoke-v2 ]]
+bash "$UNDER_CLAW_WORK_HOME/packaging/rollback.sh"
+[[ "$(cat "$UNDER_CLAW_WORK_HOME/RELEASE-VERSION.txt")" == smoke-v2 ]]
+
+update_lock="$(dirname "$UNDER_CLAW_WORK_HOME")/.under-claw-update.lock"
+mkdir "$update_lock"
+if bash "$UNDER_CLAW_WORK_HOME/packaging/update.sh" "$updated" >/dev/null 2>&1; then
+  echo "Concurrent update lock was ignored" >&2
+  exit 1
+fi
+rmdir "$update_lock"
+
 corrupt="$temp/corrupt"
 cp -R "$updated" "$corrupt"
 printf 'corrupt\n' >> "$corrupt/UNSIGNED-NOTICE.txt"
-if bash "$release/packaging/update.sh" "$corrupt" >/dev/null 2>&1; then
+if bash "$UNDER_CLAW_WORK_HOME/packaging/update.sh" "$corrupt" >/dev/null 2>&1; then
   echo "Corrupt release was accepted" >&2
   exit 1
 fi
@@ -172,8 +194,11 @@ cli="$UNDER_CLAW_WORK_HOME/bin/worklog"
 before="$(checksum_path="$cli"; \
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$checksum_path"; \
   else sha256sum "$checksum_path"; fi)"
-if UNDER_CLAW_UPDATE_HEALTH_COMMAND=false \
-  bash "$release/packaging/update.sh" "$updated" >/dev/null 2>&1; then
+unhealthy="$temp/unhealthy"
+cp -R "$updated" "$unhealthy"
+rm "$unhealthy/app/.under-claw-app-health"
+refresh_manifest "$unhealthy"
+if bash "$UNDER_CLAW_WORK_HOME/packaging/update.sh" "$unhealthy" >/dev/null 2>&1; then
   echo "Failed health check was accepted" >&2
   exit 1
 fi

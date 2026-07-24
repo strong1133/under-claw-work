@@ -161,6 +161,10 @@ if [[ "$packaged" == "1" ]]; then
     README.txt release-manifest.tsv; do
     cp "$product_root/$file" "$candidate/$file"
   done
+else
+  rm -rf "$candidate/packaging"
+  cp -RL "$product_root/packaging" "$candidate/packaging"
+  printf '%s\n' "$revision" > "$candidate/RELEASE-VERSION.txt"
 fi
 
 {

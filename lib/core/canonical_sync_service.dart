@@ -46,6 +46,7 @@ class CanonicalSyncService {
   Future<CanonicalSyncReport> syncCanonical({
     required String message,
     required CanonicalPrePushVerifier verifier,
+    Map<String, String> remoteRefLeases = const {},
   }) async {
     workspace.ensureLayout();
     final lock = File(p.join(workspace.local.path, 'canonical-sync.lock'));
@@ -74,7 +75,11 @@ class CanonicalSyncService {
       throw StateError('Canonical sync is already running for this workspace.');
     }
     try {
-      return await _syncLocked(message: message, verifier: verifier);
+      return await _syncLocked(
+        message: message,
+        verifier: verifier,
+        remoteRefLeases: remoteRefLeases,
+      );
     } finally {
       handle.unlockSync();
       handle.closeSync();
@@ -88,9 +93,16 @@ class CanonicalSyncService {
   Future<CanonicalSyncReport> _syncLocked({
     required String message,
     required CanonicalPrePushVerifier verifier,
+    required Map<String, String> remoteRefLeases,
   }) async {
     if (message.trim().isEmpty) {
       throw const FormatException('Canonical sync commit message is required.');
+    }
+    for (final fence in remoteRefLeases.entries) {
+      if (!RegExp(r'^refs/[A-Za-z0-9._/-]+$').hasMatch(fence.key) ||
+          !RegExp(r'^[0-9a-f]{40,64}$').hasMatch(fence.value)) {
+        throw const FormatException('Invalid canonical push fence.');
+      }
     }
     final upstream = await _requireRepository();
     await _requireCleanIndex();
@@ -150,11 +162,17 @@ class CanonicalSyncService {
       await _validateAndVerify(verifier);
       final expectedRemote = await _output(['rev-parse', upstream.trackingRef]);
       final afterHead = await _output(['rev-parse', 'HEAD']);
+      final fencedRefs = remoteRefLeases.entries.toList()
+        ..sort((left, right) => left.key.compareTo(right.key));
       final pushed = await _result([
         'push',
+        if (fencedRefs.isNotEmpty) '--atomic',
         '--force-with-lease=${upstream.remoteRef}:$expectedRemote',
+        for (final fence in fencedRefs)
+          '--force-with-lease=${fence.key}:${fence.value}',
         upstream.remoteName,
         'HEAD:${upstream.remoteRef}',
+        for (final fence in fencedRefs) '${fence.value}:${fence.key}',
       ]);
       if (pushed.exitCode != 0) {
         throw StateError(

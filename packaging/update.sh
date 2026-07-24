@@ -10,17 +10,30 @@ install_root="${UNDER_CLAW_WORK_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/under
   echo "Release and install roots must be absolute" >&2; exit 64;
 }
 case "$install_root" in /|"$HOME"|"${HOME}/"|"") echo "Unsafe install root" >&2; exit 64 ;; esac
+parent="$(dirname "$install_root")"
+mkdir -p "$parent"
+lock="$parent/.under-claw-update.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  echo "Another Under Claw Work update is active" >&2
+  exit 75
+fi
+cleanup_lock() { rmdir "$lock" 2>/dev/null || true; }
+trap cleanup_lock EXIT
 installed_cli="$install_root/bin/worklog"
 [[ -x "$installed_cli" ]] || installed_cli="$install_root/bin/worklog.exe"
 [[ -x "$installed_cli" ]] || { echo "Existing installation not found" >&2; exit 66; }
-bash "$release/packaging/verify-release.sh" "$release"
+trusted_verifier="$install_root/packaging/verify-release.sh"
+[[ -f "$trusted_verifier" && ! -L "$trusted_verifier" ]] || {
+  echo "Trusted installed release verifier is unavailable" >&2; exit 65;
+}
+bash "$trusted_verifier" "$release"
 
-parent="$(dirname "$install_root")"
-mkdir -p "$parent"
 candidate="$(mktemp -d "$parent/.under-claw-update.XXXXXX")"
 backup="$parent/.under-claw-backup.$$"
+previous="$install_root.previous"
 cleanup() {
   if [[ -d "$candidate" ]]; then rm -rf "$candidate"; fi
+  rmdir "$lock" 2>/dev/null || true
   return 0
 }
 trap cleanup EXIT
@@ -43,20 +56,39 @@ for file in UNSIGNED-NOTICE.txt ACCEPTED-RUNTIMES.txt RELEASE-VERSION.txt \
   cp "$release/$file" "$candidate/$file"
 done
 
-health="${UNDER_CLAW_UPDATE_HEALTH_COMMAND:-\"$candidate/bin/$cli_name\" --help}"
 if [[ ! -f "$candidate/app/.under-claw-app-health" ]] ||
-  ! UNDER_CLAW_WORK_HOME="$candidate" sh -c "$health" >/dev/null 2>&1; then
+  ! UNDER_CLAW_WORK_HOME="$candidate" \
+    "$candidate/bin/$cli_name" --help >/dev/null 2>&1; then
   echo "Updated runtime failed health check; existing installation preserved" >&2
   exit 70
 fi
 
 mv "$install_root" "$backup"
-if mv "$candidate" "$install_root"; then
-  rm -rf "$backup"
-  echo "Under Claw Work updated from an unsigned archive."
-  echo "Manifest hashes provide integrity, not publisher authenticity."
-else
+if ! mv "$candidate" "$install_root"; then
   mv "$backup" "$install_root"
   echo "Update swap failed; previous installation restored" >&2
   exit 71
 fi
+
+old_previous="$parent/.under-claw-previous.$$"
+restore_active() {
+  local failed_candidate="$parent/.under-claw-failed-candidate.$$"
+  if mv "$install_root" "$failed_candidate" && mv "$backup" "$install_root"; then
+    if [[ -d "$old_previous" ]]; then mv "$old_previous" "$previous"; fi
+    rm -rf "$failed_candidate"
+  fi
+}
+if [[ -d "$previous" ]] && ! mv "$previous" "$old_previous"; then
+  restore_active
+  echo "Could not stage the existing rollback copy; update reverted" >&2
+  exit 71
+fi
+if ! mv "$backup" "$previous"; then
+  restore_active
+  echo "Could not retain the previous installation; update reverted" >&2
+  exit 71
+fi
+rm -rf "$old_previous"
+echo "Under Claw Work updated from an unsigned archive."
+echo "Manifest hashes provide integrity, not publisher authenticity."
+echo "Previous installation retained for: worklog update-rollback"

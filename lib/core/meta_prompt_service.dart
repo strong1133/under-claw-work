@@ -45,6 +45,7 @@ class MetaPromptService {
       throw StateError('A non-empty Draft is required to generate Meta.');
     }
     final descriptor = runtimes.require(adapterId, capability: 'generate_meta');
+    final sourceSha256 = TaskRepository.draftSha256(source.promptDraft);
     final process = await Process.start(
       descriptor.executable,
       descriptor.fixedArguments,
@@ -57,6 +58,7 @@ class MetaPromptService {
         'type': 'generate_meta',
         'task_id': source.id,
         'source_revision': source.promptDraftRevision,
+        'source_sha256': sourceSha256,
         'draft': source.promptDraft,
       }),
     );
@@ -86,6 +88,7 @@ class MetaPromptService {
         decoded['type'] != 'meta_prompt_result' ||
         decoded['task_id'] != source.id ||
         decoded['source_revision'] != source.promptDraftRevision ||
+        decoded['source_sha256'] != sourceSha256 ||
         decoded['meta_prompt'] is! String ||
         (decoded['meta_prompt'] as String).trim().isEmpty) {
       throw const FormatException('Invalid Meta Prompt adapter response.');

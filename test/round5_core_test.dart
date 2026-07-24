@@ -196,6 +196,7 @@ WorkTask _readyTask({bool autoDeriveTasks = false}) => WorkTask(
   promptMeta: 'Meta',
   promptDraftRevision: 1,
   promptMetaSourceRevision: 1,
+  promptMetaSourceSha256: TaskRepository.draftSha256('Draft'),
   approval: PromptApproval.approved,
   autoDeriveTasks: autoDeriveTasks,
   targetEnvironment: 'ENV-test',

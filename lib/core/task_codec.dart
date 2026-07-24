@@ -24,6 +24,7 @@ class TaskCodec {
       promptMeta: prompt['meta'] as String? ?? '',
       promptDraftRevision: prompt['draft_revision'] as int? ?? 1,
       promptMetaSourceRevision: prompt['meta_source_revision'] as int? ?? 0,
+      promptMetaSourceSha256: prompt['meta_source_sha256'] as String? ?? '',
       approval: PromptApproval.values.byName(
         prompt['approval'] as String? ?? 'missing',
       ),
@@ -87,6 +88,7 @@ legacy_ids: ${_list(task.legacyIds)}
 prompt:
   draft_revision: ${task.promptDraftRevision}
   meta_source_revision: ${task.promptMetaSourceRevision}
+  meta_source_sha256: "${task.promptMetaSourceSha256}"
   approval: ${task.approval.name}
   draft: |-
 ${block(task.promptDraft)}

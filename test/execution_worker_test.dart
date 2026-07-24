@@ -582,6 +582,8 @@ WorkTask _task() => const WorkTask(
   promptMeta: 'meta',
   promptDraftRevision: 1,
   promptMetaSourceRevision: 1,
+  promptMetaSourceSha256:
+      '7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26693a',
   approval: PromptApproval.approved,
   autoDeriveTasks: false,
   targetEnvironment: 'ENV-worker',

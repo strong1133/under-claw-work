@@ -93,6 +93,8 @@ void main() {
           promptMeta: 'Meta',
           promptDraftRevision: 1,
           promptMetaSourceRevision: 1,
+          promptMetaSourceSha256:
+              'ebf12ef47cf575b3ba9a3cc019c5310146fdac88f6d1be6618d6e91158c2f174',
           approval: PromptApproval.approved,
           autoDeriveTasks: false,
           targetEnvironment: 'ENV-example',

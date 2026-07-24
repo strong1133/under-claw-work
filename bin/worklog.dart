@@ -64,6 +64,17 @@ Commands:
   runtime-list <workspace>
   meta-generate <workspace> <task-id> <adapter-id>
              generate a pending Meta Prompt through a verified adapter
+  auto-meta-next <workspace> <environment-id> <adapter-id>
+             pull and generate the next missing/stale Meta Prompt exactly once
+  notification-register <workspace> <local-config-json>
+             register local-only FCM/Hermes notification credentials
+  notification-list <workspace>
+             list local notification channel ids without secrets
+  update-check <extracted-release-directory>
+  update-apply <extracted-release-directory>
+             verify and atomically apply an extracted release
+  update-rollback
+             swap back to the previously verified installation
   task-control <workspace> <task-id> <command> [run-id]
              request start|pause|resume|cancel|complete
   worker-next <workspace> <environment-id> <executable> [runner-arguments...]
@@ -86,6 +97,37 @@ Commands:
   migrate-rollback <workspace> <import-id>
   doctor     verify workspace and report locked capabilities
 ''');
+    return;
+  }
+  if (arguments.first == 'hermes-meta-adapter') {
+    await runHermesMetaPromptAdapter(
+      hermesExecutable: Platform.environment['UNDER_CLAW_HERMES_BIN'],
+    );
+    return;
+  }
+  if (arguments.first == 'update-check' ||
+      arguments.first == 'update-apply' ||
+      arguments.first == 'update-rollback') {
+    final service = ReleaseUpdateService();
+    if (arguments.first == 'update-rollback') {
+      stdout.writeln(await service.rollback());
+      return;
+    }
+    if (arguments.length != 2) {
+      throw const FormatException(
+        'update-check/update-apply requires an extracted release directory.',
+      );
+    }
+    final release = Directory(arguments[1]);
+    if (arguments.first == 'update-check') {
+      final status = await service.check(release);
+      stdout.writeln(
+        'current=${status.currentVersion} candidate=${status.candidateVersion} '
+        'update_available=${status.updateAvailable}',
+      );
+    } else {
+      stdout.writeln(await service.apply(release));
+    }
     return;
   }
   if (arguments.first == 'setup' || arguments.first == 'initialize') {
@@ -720,6 +762,55 @@ Commands:
           'task=${result.task.id} approval=${result.task.approval.name} '
           'adapter=${result.adapterId} output_sha256=${result.outputSha256}',
         );
+      case 'auto-meta-next':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'auto-meta-next requires workspace, environment id and adapter id.',
+          );
+        }
+        await GitSyncService(workspace).pullFastForward();
+        final notificationRegistry = NotificationChannelRegistry(workspace);
+        MetaReadyNotifier notifier = const NoopMetaReadyNotifier();
+        if (notificationRegistry.list().isNotEmpty) {
+          final queuedNotifier = QueuedMetaReadyNotifier(
+            workspace,
+            HttpMetaReadyNotifier(notificationRegistry),
+          );
+          await queuedNotifier.retryPending();
+          notifier = queuedNotifier;
+        }
+        final result = await AutoMetaWorker(
+          workspace: workspace,
+          environmentId: arguments[2],
+          adapterId: arguments[3],
+          claims: GitRemoteClaimService(workspace),
+          notifier: notifier,
+        ).runNext();
+        projection.rebuild();
+        if (result == null) {
+          stdout.writeln('auto_meta=idle');
+        } else {
+          stdout.writeln(
+            'auto_meta=${result.status.name} task=${result.taskId} '
+            'output_sha256=${result.outputSha256}',
+          );
+        }
+      case 'notification-register':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'notification-register requires workspace and local config JSON.',
+          );
+        }
+        final registry = NotificationChannelRegistry(workspace);
+        registry.registerFrom(File(arguments[2]));
+        stdout.writeln('notification_channels=${registry.list().length}');
+      case 'notification-list':
+        for (final channel in NotificationChannelRegistry(workspace).list()) {
+          stdout.writeln(
+            '${channel.id}\t${channel.kind.name}\t'
+            'targets=${channel.kind == NotificationChannelKind.fcm ? channel.tokens.length : 1}',
+          );
+        }
       case 'control-disposition':
         if (arguments.length < 4) {
           throw const FormatException(

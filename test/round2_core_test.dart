@@ -204,6 +204,7 @@ target_environment: ENV-local
 prompt:
   draft_revision: 2
   meta_source_revision: 2
+  meta_source_sha256: "ebf12ef47cf575b3ba9a3cc019c5310146fdac88f6d1be6618d6e91158c2f174"
   approval: approved
   draft: "Draft"
   meta: "Meta"

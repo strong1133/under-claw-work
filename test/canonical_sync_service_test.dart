@@ -210,6 +210,56 @@ void main() {
     );
   });
 
+  test(
+    'claim ref lease and canonical branch push are one atomic transaction',
+    () async {
+      const claimRef = 'refs/under-claw-work/claims/TSK-fenced';
+      final originalClaim = await _output(local.path, ['rev-parse', 'HEAD']);
+      await _git(remote.path, ['update-ref', claimRef, originalClaim]);
+      EntityService(
+        workspace,
+      ).create(kind: EntityKind.domain, title: 'Fenced publish succeeds');
+      final accepted = await CanonicalSyncService(workspace).syncCanonical(
+        message: 'current claim permits branch',
+        verifier: _RecordingVerifier(),
+        remoteRefLeases: {claimRef: originalClaim},
+      );
+      expect(accepted.pushed, isTrue);
+
+      final peer = Directory(p.join(temporary.path, 'claim-peer'));
+      await _git(temporary.path, ['clone', remote.path, peer.path]);
+      await _identity(peer.path);
+      await _git(peer.path, ['commit', '--allow-empty', '-m', 'take claim']);
+      final replacementClaim = await _output(peer.path, ['rev-parse', 'HEAD']);
+      await _git(peer.path, ['push', 'origin', 'HEAD:$claimRef']);
+      final branchBefore = await _output(remote.path, [
+        'rev-parse',
+        'refs/heads/$branch',
+      ]);
+      EntityService(
+        workspace,
+      ).create(kind: EntityKind.domain, title: 'Must not publish');
+
+      await expectLater(
+        CanonicalSyncService(workspace).syncCanonical(
+          message: 'stale claim must fence branch',
+          verifier: _RecordingVerifier(),
+          remoteRefLeases: {claimRef: originalClaim},
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        await _output(remote.path, ['rev-parse', 'refs/heads/$branch']),
+        branchBefore,
+      );
+      expect(
+        await _output(remote.path, ['rev-parse', claimRef]),
+        replacementClaim,
+      );
+    },
+  );
+
   test('pushes to configured non-origin remote and remote branch', () async {
     await _git(local.path, ['remote', 'rename', 'origin', 'backup']);
     await _git(local.path, [

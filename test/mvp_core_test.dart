@@ -363,6 +363,7 @@ WorkTask _task({TaskStatus status = TaskStatus.ready}) {
     promptMeta: 'Meta',
     promptDraftRevision: 1,
     promptMetaSourceRevision: 1,
+    promptMetaSourceSha256: TaskRepository.draftSha256('Draft'),
     approval: PromptApproval.approved,
     autoDeriveTasks: true,
     targetEnvironment: 'ENV-local',

@@ -30,6 +30,8 @@ cli_name=worklog
 [[ ! -f "$root/build/cli/bundle/bin/worklog.exe" ]] || cli_name=worklog.exe
 cp -RL "$root/build/cli/bundle" "$release/build/cli/bundle"
 cp "$root/packaging/install.sh" "$root/packaging/update.sh" \
+  "$root/packaging/rollback.sh" "$root/packaging/auto-meta-watch.sh" \
+  "$root/packaging/install-auto-meta-service.sh" \
   "$root/packaging/uninstall.sh" "$root/packaging/verify-release.sh" \
   "$release/packaging/"
 cp -RL "$root/skills/under-claw-work-plan" "$root/skills/under-claw-work" \

@@ -51,6 +51,26 @@ Skill installation is supported for Hermes without changing Hermes Core.
 Automated Hermes Task execution is a separate adapter boundary: live remote E2E
 and reviewer attestation remain gated and are never inferred from a fixture.
 
+## Automatic Meta Prompt control plane
+
+Draft Prompt and generated Meta Prompt remain separate revisions. The existing
+`prompt_approval` lifecycle (`missing`, `stale`, `pending`, `approved`) is the
+single prompt-state authority. A Git-ref compare-and-set lease prevents the
+MacBook and Astro-Hermes from generating the same revision concurrently.
+Generation explicitly executes the checksum-pinned `under-claw-meta-prompt`
+adapter, and the Meta, Run, SkillInvocation, and Event records are published in
+one validated Git transaction. Approval and Task execution remain manual.
+
+Post-commit notifications use local-only FCM/Hermes webhook credentials. Failed
+delivery enters a retryable local outbox and never rolls back canonical data.
+See [auto-meta-notifications-update.md](auto-meta-notifications-update.md).
+
+## Runtime updates
+
+Manifest-verified extracted releases are candidate-built, health-checked, and
+atomically swapped. The previous runtime is retained for an explicit rollback.
+The release manifest guarantees archive integrity but not publisher authenticity.
+
 ## Current boundary
 
 This first implementation is an executable vertical slice, not the complete

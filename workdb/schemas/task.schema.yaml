@@ -31,6 +31,7 @@ properties:
     properties:
       draft_revision: {type: integer, minimum: 1}
       meta_source_revision: {type: integer, minimum: 0}
+      meta_source_sha256: {type: string, pattern: "^$|^[0-9a-f]{64}$"}
       approval: {enum: [missing, stale, pending, approved]}
       draft: {type: string}
       meta: {type: string}

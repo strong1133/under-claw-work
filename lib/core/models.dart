@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 enum TaskStatus {
   draft,
   ready,
@@ -26,6 +30,7 @@ class WorkTask {
     required this.promptMeta,
     required this.promptDraftRevision,
     required this.promptMetaSourceRevision,
+    this.promptMetaSourceSha256 = '',
     required this.approval,
     required this.autoDeriveTasks,
     this.autoFollowupTasks = false,
@@ -51,6 +56,7 @@ class WorkTask {
   final String promptMeta;
   final int promptDraftRevision;
   final int promptMetaSourceRevision;
+  final String promptMetaSourceSha256;
   final PromptApproval approval;
   final bool autoDeriveTasks;
   final bool autoFollowupTasks;
@@ -69,6 +75,9 @@ class WorkTask {
   bool get isMetaCurrent =>
       promptMeta.isNotEmpty &&
       promptMetaSourceRevision == promptDraftRevision &&
+      promptMetaSourceSha256.isNotEmpty &&
+      promptMetaSourceSha256 ==
+          sha256.convert(utf8.encode(promptDraft)).toString() &&
       approval == PromptApproval.approved;
 
   WorkTask copyWith({
@@ -78,6 +87,7 @@ class WorkTask {
     String? promptMeta,
     int? promptDraftRevision,
     int? promptMetaSourceRevision,
+    String? promptMetaSourceSha256,
     PromptApproval? approval,
     bool? autoDeriveTasks,
     bool? autoFollowupTasks,
@@ -104,6 +114,8 @@ class WorkTask {
       promptDraftRevision: promptDraftRevision ?? this.promptDraftRevision,
       promptMetaSourceRevision:
           promptMetaSourceRevision ?? this.promptMetaSourceRevision,
+      promptMetaSourceSha256:
+          promptMetaSourceSha256 ?? this.promptMetaSourceSha256,
       approval: approval ?? this.approval,
       autoDeriveTasks: autoDeriveTasks ?? this.autoDeriveTasks,
       autoFollowupTasks: autoFollowupTasks ?? this.autoFollowupTasks,

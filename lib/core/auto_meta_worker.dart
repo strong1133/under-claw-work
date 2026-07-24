@@ -1,0 +1,442 @@
+import 'canonical_secret_verifier.dart';
+import 'canonical_repository.dart';
+import 'canonical_sync_service.dart';
+import 'git_remote_claim_service.dart';
+import 'id.dart';
+import 'meta_prompt_service.dart';
+import 'models.dart';
+import 'notification_service.dart';
+import 'task_repository.dart';
+import 'workspace.dart';
+
+abstract interface class CanonicalMetaPublisher {
+  Future<void> publish(String message, RemoteClaimLease lease);
+}
+
+class GitCanonicalMetaPublisher implements CanonicalMetaPublisher {
+  GitCanonicalMetaPublisher(this.workspace);
+
+  final Workspace workspace;
+
+  @override
+  Future<void> publish(String message, RemoteClaimLease lease) async {
+    await CanonicalSyncService(workspace).syncCanonical(
+      message: message,
+      verifier: const CanonicalSecretVerifier(),
+      remoteRefLeases: {lease.ref: lease.objectId},
+    );
+  }
+}
+
+enum AutoMetaRunStatus { generated, generatedWithNotificationFailure }
+
+class AutoMetaRunResult {
+  const AutoMetaRunResult({
+    required this.taskId,
+    required this.status,
+    required this.outputSha256,
+  });
+
+  final String taskId;
+  final AutoMetaRunStatus status;
+  final String outputSha256;
+}
+
+class AutoMetaWorker {
+  AutoMetaWorker({
+    required this.workspace,
+    required this.environmentId,
+    required this.adapterId,
+    required this.claims,
+    MetaPromptService? generator,
+    CanonicalMetaPublisher? publisher,
+    MetaReadyNotifier? notifier,
+    this.claimTtl = const Duration(minutes: 10),
+  }) : generator = generator ?? MetaPromptService(workspace),
+       publisher = publisher ?? GitCanonicalMetaPublisher(workspace),
+       notifier = notifier ?? const NoopMetaReadyNotifier();
+
+  final Workspace workspace;
+  final String environmentId;
+  final String adapterId;
+  final RemoteClaimProvider claims;
+  final MetaPromptService generator;
+  final CanonicalMetaPublisher publisher;
+  final MetaReadyNotifier notifier;
+  final Duration claimTtl;
+
+  static bool isEligible(WorkTask task) {
+    if (task.promptDraft.trim().isEmpty) return false;
+    if (task.status == TaskStatus.completed ||
+        task.status == TaskStatus.cancelled ||
+        task.status == TaskStatus.running ||
+        task.status == TaskStatus.claimed) {
+      return false;
+    }
+    final sourceHashChanged =
+        task.promptMetaSourceSha256 !=
+        TaskRepository.draftSha256(task.promptDraft);
+    return task.promptMeta.trim().isEmpty ||
+        sourceHashChanged ||
+        task.approval == PromptApproval.missing ||
+        task.approval == PromptApproval.stale;
+  }
+
+  Future<AutoMetaRunResult?> runNext() async {
+    final repository = TaskRepository(workspace);
+    final candidates = repository.list().where(isEligible).toList()
+      ..sort((left, right) => left.id.compareTo(right.id));
+    for (final candidate in candidates) {
+      final runId = newId('RUN');
+      final lease = await claims.tryAcquire(
+        taskId: candidate.id,
+        runId: runId,
+        environmentId: environmentId,
+        ttl: claimTtl,
+      );
+      if (lease == null) continue;
+      var activeLease = lease;
+      try {
+        final source = repository.get(candidate.id);
+        if (source == null || !isEligible(source)) continue;
+        if (!await claims.isCurrent(activeLease)) continue;
+        final startLease = await claims.renew(activeLease, ttl: claimTtl);
+        if (startLease == null) continue;
+        activeLease = startLease;
+        final descriptor = generator.runtimes.require(
+          adapterId,
+          capability: 'generate_meta',
+        );
+        final startAudit = _recordStartAudit(
+          source: source,
+          runId: runId,
+          executableSha256: descriptor.executableSha256,
+        );
+        try {
+          await publisher.publish(
+            'worklog: start Meta Prompt generation for ${source.id} rev '
+            '${source.promptDraftRevision}',
+            activeLease,
+          );
+        } catch (_) {
+          _removeAudit([startAudit]);
+          rethrow;
+        }
+        if (!await claims.isCurrent(activeLease)) continue;
+        final fencedSource = repository.get(source.id);
+        if (fencedSource == null ||
+            !isEligible(fencedSource) ||
+            fencedSource.promptDraftRevision != source.promptDraftRevision ||
+            fencedSource.promptDraft != source.promptDraft) {
+          continue;
+        }
+        late final MetaPromptGenerationResult generated;
+        try {
+          generated = await generator.generate(
+            taskId: fencedSource.id,
+            adapterId: adapterId,
+          );
+        } on Object catch (error) {
+          final failureAudit = _recordFailureAudit(
+            source: fencedSource,
+            runId: runId,
+            executableSha256: descriptor.executableSha256,
+            errorType: error.runtimeType.toString(),
+          );
+          final failureLease = await claims.renew(activeLease, ttl: claimTtl);
+          if (failureLease != null) {
+            activeLease = failureLease;
+            try {
+              await publisher.publish(
+                'worklog: record failed Meta Prompt generation for '
+                '${fencedSource.id} rev ${fencedSource.promptDraftRevision}',
+                activeLease,
+              );
+            } catch (_) {
+              _removeAudit(failureAudit);
+            }
+          } else {
+            _removeAudit(failureAudit);
+          }
+          rethrow;
+        }
+        if (!await claims.isCurrent(activeLease)) {
+          repository.update(fencedSource);
+          continue;
+        }
+        final audit = _recordSuccessAudit(
+          source: fencedSource,
+          generated: generated,
+          runId: runId,
+        );
+        if (!await claims.isCurrent(activeLease)) {
+          _removeAudit(audit);
+          repository.update(fencedSource);
+          continue;
+        }
+        final publishLease = await claims.renew(activeLease, ttl: claimTtl);
+        if (publishLease == null) {
+          _removeAudit(audit);
+          repository.update(fencedSource);
+          continue;
+        }
+        activeLease = publishLease;
+        try {
+          await publisher.publish(
+            'worklog: generate Meta Prompt for ${fencedSource.id} rev '
+            '${fencedSource.promptDraftRevision}',
+            activeLease,
+          );
+        } catch (_) {
+          _removeAudit(audit);
+          repository.update(fencedSource);
+          rethrow;
+        }
+        var status = AutoMetaRunStatus.generated;
+        try {
+          final report = await notifier.notifyMetaReady(
+            MetaReadyNotification(
+              taskId: generated.task.id,
+              title: generated.task.title,
+              sourceRevision: generated.task.promptMetaSourceRevision,
+              sourceSha256: generated.task.promptMetaSourceSha256,
+              environmentId: environmentId,
+              adapterId: generated.adapterId,
+            ),
+          );
+          if (report.failed > 0) {
+            status = AutoMetaRunStatus.generatedWithNotificationFailure;
+          }
+        } catch (_) {
+          status = AutoMetaRunStatus.generatedWithNotificationFailure;
+        }
+        return AutoMetaRunResult(
+          taskId: generated.task.id,
+          status: status,
+          outputSha256: generated.outputSha256,
+        );
+      } finally {
+        await claims.release(activeLease);
+      }
+    }
+    return null;
+  }
+
+  (EntityKind, String) _recordStartAudit({
+    required WorkTask source,
+    required String runId,
+    required String executableSha256,
+  }) {
+    final eventId = newId('EVT');
+    CanonicalRepository(workspace).create(
+      CanonicalEntity(
+        kind: EntityKind.event,
+        id: eventId,
+        data: {
+          'schema_version': 1,
+          'id': eventId,
+          'type': 'event',
+          'event_type': 'meta_prompt_generation_started',
+          'occurred_at': DateTime.now().toUtc().toIso8601String(),
+          'task_id': source.id,
+          'attempt_run_id': runId,
+          'environment_id': environmentId,
+          'adapter_id': adapterId,
+          'adapter_executable_sha256': executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': TaskRepository.draftSha256(source.promptDraft),
+          'scope': {
+            'task_ids': [source.id],
+          },
+        },
+      ),
+    );
+    return (EntityKind.event, eventId);
+  }
+
+  List<(EntityKind, String)> _recordFailureAudit({
+    required WorkTask source,
+    required String runId,
+    required String executableSha256,
+    required String errorType,
+  }) {
+    final canonical = CanonicalRepository(workspace);
+    final now = DateTime.now().toUtc().toIso8601String();
+    final sourceSha256 = TaskRepository.draftSha256(source.promptDraft);
+    final operationId = newId('OPR');
+    final invocationId = newId('SKI');
+    final eventId = newId('EVT');
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.run,
+        id: runId,
+        data: {
+          'schema_version': 1,
+          'id': runId,
+          'type': 'run',
+          'task_id': source.id,
+          'operation_id': operationId,
+          'status': 'failed',
+          'purpose': 'automatic_meta_prompt_generation',
+          'environment_id': environmentId,
+          'adapter_id': adapterId,
+          'adapter_executable_sha256': executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'error_type': errorType,
+          'started_at': now,
+          'finished_at': now,
+        },
+      ),
+    );
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.invocation,
+        id: invocationId,
+        data: {
+          'schema_version': 1,
+          'id': invocationId,
+          'type': 'skill_invocation',
+          'run_id': runId,
+          'skill_id': 'under-claw-meta-prompt',
+          'round': 0,
+          'sequence': 1,
+          'bundle_version': 'installed-runtime-v1',
+          'status': 'failed',
+          'adapter_id': adapterId,
+          'adapter_executable_sha256': executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'error_type': errorType,
+          'started_at': now,
+          'finished_at': now,
+        },
+      ),
+    );
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.event,
+        id: eventId,
+        data: {
+          'schema_version': 1,
+          'id': eventId,
+          'type': 'event',
+          'event_type': 'meta_prompt_generation_failed',
+          'occurred_at': now,
+          'task_id': source.id,
+          'run_id': runId,
+          'environment_id': environmentId,
+          'adapter_id': adapterId,
+          'adapter_executable_sha256': executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'error_type': errorType,
+          'scope': {
+            'task_ids': [source.id],
+            'run_ids': [runId],
+          },
+        },
+      ),
+    );
+    return [
+      (EntityKind.run, runId),
+      (EntityKind.invocation, invocationId),
+      (EntityKind.event, eventId),
+    ];
+  }
+
+  List<(EntityKind, String)> _recordSuccessAudit({
+    required WorkTask source,
+    required MetaPromptGenerationResult generated,
+    required String runId,
+  }) {
+    final canonical = CanonicalRepository(workspace);
+    final now = DateTime.now().toUtc().toIso8601String();
+    final sourceSha256 = TaskRepository.draftSha256(source.promptDraft);
+    final operationId = newId('OPR');
+    final invocationId = newId('SKI');
+    final eventId = newId('EVT');
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.run,
+        id: runId,
+        data: {
+          'schema_version': 1,
+          'id': runId,
+          'type': 'run',
+          'task_id': source.id,
+          'operation_id': operationId,
+          'status': 'completed',
+          'purpose': 'automatic_meta_prompt_generation',
+          'environment_id': environmentId,
+          'adapter_id': generated.adapterId,
+          'adapter_executable_sha256': generated.executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'output_sha256': generated.outputSha256,
+          'started_at': now,
+          'finished_at': now,
+        },
+      ),
+    );
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.invocation,
+        id: invocationId,
+        data: {
+          'schema_version': 1,
+          'id': invocationId,
+          'type': 'skill_invocation',
+          'run_id': runId,
+          'skill_id': 'under-claw-meta-prompt',
+          'round': 0,
+          'sequence': 1,
+          'bundle_version': 'installed-runtime-v1',
+          'status': 'completed',
+          'adapter_id': generated.adapterId,
+          'adapter_executable_sha256': generated.executableSha256,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'output_sha256': generated.outputSha256,
+          'started_at': now,
+          'finished_at': now,
+        },
+      ),
+    );
+    canonical.create(
+      CanonicalEntity(
+        kind: EntityKind.event,
+        id: eventId,
+        data: {
+          'schema_version': 1,
+          'id': eventId,
+          'type': 'event',
+          'event_type': 'meta_prompt_generated',
+          'occurred_at': now,
+          'task_id': source.id,
+          'run_id': runId,
+          'source_revision': source.promptDraftRevision,
+          'source_sha256': sourceSha256,
+          'output_sha256': generated.outputSha256,
+          'scope': {
+            'task_ids': [source.id],
+            'run_ids': [runId],
+          },
+        },
+      ),
+    );
+    return [
+      (EntityKind.run, runId),
+      (EntityKind.invocation, invocationId),
+      (EntityKind.event, eventId),
+    ];
+  }
+
+  void _removeAudit(List<(EntityKind, String)> audit) {
+    final canonical = CanonicalRepository(workspace);
+    for (final entry in audit.reversed) {
+      final file = canonical.fileFor(entry.$1, entry.$2);
+      if (file.existsSync()) file.deleteSync();
+    }
+  }
+}

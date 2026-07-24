@@ -179,6 +179,7 @@ Future<void> main() async {
     'type': 'meta_prompt_result',
     'task_id': input['task_id'],
     'source_revision': input['source_revision'],
+    'source_sha256': input['source_sha256'],
     'meta_prompt': 'META: \${input['draft']}',
   }));
 }

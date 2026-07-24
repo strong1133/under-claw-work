@@ -174,7 +174,12 @@ worklog git-sync <workspace> [commit-message]
 worklog runtime-register <workspace> <descriptor-json>
 worklog runtime-list <workspace>
 worklog meta-generate <workspace> <task-id> <adapter-id>
+worklog auto-meta-next <workspace> <environment-id> <adapter-id>
+worklog notification-register <workspace> <local-config-json>
+worklog notification-list <workspace>
 worklog worker-next-agent <workspace> <environment-id> <adapter-id>
+worklog update-check|update-apply <extracted-release-directory>
+worklog update-rollback
 worklog doctor <workspace>
 ```
 
@@ -184,6 +189,13 @@ upstream으로 publish하며, 충돌 시 원격을 덮어쓰지 않는다. Runti
 배포 archive에는 production descriptor가 내장되지 않으므로 acceptance를 통과한
 generic/host adapter를 `runtime-register`로 등록하기 전 Meta/worker 실행은
 fail-closed 한다.
+
+`auto-meta-next`는 Draft가 있고 Meta가 비어 있거나 `missing`/`stale`인 Task만
+Git remote claim으로 선점한 뒤 `$under-claw-meta-prompt`를 명시 호출한다. 생성된
+Meta는 `pending`으로 저장하며 자동 승인·실행하지 않는다. 정본 push 성공 후에만
+로컬 FCM/Hermes webhook 알림을 전송하고 실패는 outbox에서 재시도한다. 자세한
+운영 계약은 [`docs/auto-meta-notifications-update.md`](docs/auto-meta-notifications-update.md)에
+있다.
 
 CI의 OS별 unsigned archive는 GUI, precompiled CLI, pinned skill bundle과
 installer/updater를 한 파일에 포함한다. archive 내부 checksum은 손상 검출용이며

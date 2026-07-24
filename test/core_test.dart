@@ -162,6 +162,7 @@ target_environment: "ENV-local"
 prompt:
   draft_revision: 2
   meta_source_revision: 2
+  meta_source_sha256: "cd8299cc31676a98cce155f388469bf9fd6016ab7be6d7aee6d70499e762d230"
   approval: approved
   draft: |-
     Create a deterministic example.

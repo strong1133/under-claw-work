@@ -162,6 +162,7 @@ _Graph _seed(
       promptMeta: meta,
       promptDraftRevision: 1,
       promptMetaSourceRevision: 1,
+      promptMetaSourceSha256: TaskRepository.draftSha256('draft'),
       approval: PromptApproval.approved,
       autoDeriveTasks: false,
       targetEnvironment: 'ENV-local',
