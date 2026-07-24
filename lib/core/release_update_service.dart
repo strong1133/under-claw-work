@@ -44,7 +44,7 @@ class ReleaseUpdateService {
     final verified = await Process.run(
       await _bashExecutable(),
       [verifierPath, releasePath],
-      environment: _bashEnvironment(),
+      environment: await _bashEnvironment(),
       includeParentEnvironment: false,
       runInShell: false,
     );
@@ -83,7 +83,7 @@ class ReleaseUpdateService {
     final result = await Process.run(
       await _bashExecutable(),
       [helperPath, ...bashArguments],
-      environment: _bashEnvironment(installRoot: bashInstallRoot),
+      environment: await _bashEnvironment(installRoot: bashInstallRoot),
       includeParentEnvironment: false,
       runInShell: false,
     );
@@ -115,12 +115,26 @@ class ReleaseUpdateService {
   Future<String> _bashExecutable() async =>
       Platform.isWindows ? (await _gitBashTools()).bash : 'bash';
 
-  Map<String, String> _bashEnvironment({String? installRoot}) => {
-    'HOME': '/',
-    'PATH': '/usr/bin:/bin',
-    'LC_ALL': 'C',
-    'UNDER_CLAW_WORK_HOME': ?installRoot,
-  };
+  Future<Map<String, String>> _bashEnvironment({String? installRoot}) async {
+    if (Platform.isWindows) {
+      final tools = await _gitBashTools();
+      return {
+        'HOME': tools.root,
+        'PATH': [
+          p.join(tools.root, 'usr', 'bin'),
+          p.join(tools.root, 'bin'),
+        ].join(';'),
+        'LC_ALL': 'C',
+        'UNDER_CLAW_WORK_HOME': ?installRoot,
+      };
+    }
+    return {
+      'HOME': '/',
+      'PATH': '/usr/bin:/bin',
+      'LC_ALL': 'C',
+      'UNDER_CLAW_WORK_HOME': ?installRoot,
+    };
+  }
 
   Future<_GitBashTools> _gitBashTools() async {
     final cached = _gitBashToolsCache;
@@ -144,6 +158,7 @@ class ReleaseUpdateService {
         continue;
       }
       return _gitBashToolsCache = _GitBashTools(
+        root: gitRoot,
         bash: resolvedBash,
         cygpath: resolvedCygpath,
       );
@@ -173,8 +188,13 @@ class ReleaseUpdateService {
 }
 
 class _GitBashTools {
-  const _GitBashTools({required this.bash, required this.cygpath});
+  const _GitBashTools({
+    required this.root,
+    required this.bash,
+    required this.cygpath,
+  });
 
+  final String root;
   final String bash;
   final String cygpath;
 }
