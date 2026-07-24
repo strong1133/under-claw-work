@@ -55,7 +55,10 @@ cp -RL "$app" "$release/app/"
 source_repo="${UNDER_CLAW_SKILL_SOURCE:-}"
 if [[ -z "$source_repo" ]]; then
   source_repo="$stage/upstream"
-  git clone --quiet https://github.com/strong1133/under-claw-jarvis-plan.git "$source_repo"
+  # Skill lock hashes are defined over the upstream Git bytes. Prevent a
+  # Windows checkout from rewriting LF to CRLF before verification.
+  git -c core.autocrlf=false clone --quiet \
+    https://github.com/strong1133/under-claw-jarvis-plan.git "$source_repo"
   git -C "$source_repo" checkout --quiet "$revision"
 fi
 [[ "$(git -C "$source_repo" rev-parse HEAD)" == "$revision" ]] || {
