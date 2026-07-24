@@ -578,6 +578,46 @@ void main() {
     );
 
     test(
+      'Knowledge body round-trips both ways so memory is editable in Notion',
+      () async {
+        const mapper = NotionEntityMapper();
+        final domain = entities.create(
+          kind: EntityKind.domain,
+          title: 'Product',
+        );
+        final knowledge = entities.create(
+          kind: EntityKind.knowledge,
+          title: 'Rate limit',
+          body: 'Portal allowed 10 rps.',
+          domainId: domain.id,
+        );
+
+        // Outbound: the substance (body) is carried into Notion, not just title.
+        final entity = mapper.fromCanonical(knowledge);
+        expect(entity.properties['body'], 'Portal allowed 10 rps.');
+
+        final push = await adapter.push(entity);
+        // A human rewrites the note body directly in Notion.
+        client.simulateRemoteEdit(push.pageId, {
+          'body': 'Portal now allows 3 rps.',
+        });
+        final pull = await adapter.pull();
+        final result = NotionCanonicalReconciler(
+          workspace,
+        ).apply(pull.changes.single);
+        expect(result.action, 'updated');
+        adapter.acknowledge(pull);
+
+        // Git canonical now carries the edited body; id and scope survive.
+        final updated = CanonicalRepository(
+          workspace,
+        ).get(EntityKind.knowledge, knowledge.id)!;
+        expect(updated.body, 'Portal now allows 3 rps.');
+        expect(updated.id, knowledge.id);
+      },
+    );
+
+    test(
       'an inbound Match review_state change is an explicit conflict',
       () async {
         final domain = entities.create(
@@ -650,7 +690,8 @@ void main() {
         canonicalId: agent.id,
         pageId: 'p1',
         type: 'agent',
-        properties: const {'title': 'Renamed'},
+        // The editable name and runtime kind both flow back from Notion.
+        properties: const {'title': 'Renamed', 'kind': 'claude'},
         archived: false,
         remoteRevision: "1",
         origin: 'notion-user',
@@ -658,6 +699,9 @@ void main() {
       NotionCanonicalReconciler(workspace).apply(change);
       final reloaded = AgentRegistryService(workspace).get(agent.id)!;
       expect(reloaded.name, 'Renamed');
+      expect(reloaded.kind, 'claude');
+      // The immutable id and Environment binding survive the inbound reconcile.
+      expect(reloaded.id, agent.id);
       expect(reloaded.environmentId, env.id);
     });
   });

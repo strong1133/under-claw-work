@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'core/worklog_core.dart';
 import 'ui/agent_screen.dart';
 import 'ui/app_theme.dart';
+import 'ui/design_tokens.dart';
 import 'ui/environment_screen.dart';
 import 'ui/match_screen.dart';
 import 'ui/memory_screen.dart';
@@ -132,7 +133,10 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
+                Text(
+                  _error!,
+                  style: const TextStyle(color: AppTokens.statusDanger),
+                ),
               ],
               const SizedBox(height: 20),
               FilledButton.icon(

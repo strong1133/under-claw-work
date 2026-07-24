@@ -13,7 +13,9 @@ void main() {
     await tester.pumpWidget(UnderClawWorkApp(workspaceOverride: temporary));
     await tester.pumpAndSettle();
 
-    expect(find.text('Under Claw Work'), findsOneWidget);
+    // The workspace identity shows in both the navigation rail header and the
+    // persistent status bar (the Warp/Orca-style bottom chrome).
+    expect(find.text('Under Claw Work'), findsNWidgets(2));
     expect(find.text('No tasks yet'), findsOneWidget);
   });
 
@@ -70,6 +72,8 @@ void main() {
     await tester.pumpWidget(UnderClawWorkApp(workspaceOverride: temporary));
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Request start'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Request start'));
     await tester.pumpAndSettle();

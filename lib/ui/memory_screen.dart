@@ -270,6 +270,20 @@ class _KnowledgeTile extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             ],
+            if (item.contradictedBy.isNotEmpty) ...[
+              const SizedBox(height: AppTokens.spaceXs),
+              Text(
+                'contradicted by: ${item.contradictedBy.join(', ')}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+            if (item.derivedFrom.isNotEmpty) ...[
+              const SizedBox(height: AppTokens.spaceXs),
+              Text(
+                'derived from: ${item.derivedFrom.join(', ')}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
           ],
         ),
       ),

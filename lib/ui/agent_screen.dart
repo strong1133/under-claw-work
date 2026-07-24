@@ -230,6 +230,10 @@ class _AgentManagementScreenState extends State<AgentManagementScreen> {
                             final r = _agents.rename(_selected!.id, name);
                             return 'Name updated to "${r.name}".';
                           }),
+                          onSetKind: (kind) => _run(() {
+                            final r = _agents.setKind(_selected!.id, kind);
+                            return 'Kind updated to "${r.kind}".';
+                          }),
                           onBind: (envId) => _run(() {
                             _agents.bindEnvironment(_selected!.id, envId);
                             return 'Bound to $envId.';
@@ -317,6 +321,7 @@ class _AgentDetail extends StatefulWidget {
     required this.message,
     required this.isError,
     required this.onRename,
+    required this.onSetKind,
     required this.onBind,
     required this.onToggleActive,
   });
@@ -326,6 +331,7 @@ class _AgentDetail extends StatefulWidget {
   final String? message;
   final bool isError;
   final ValueChanged<String> onRename;
+  final ValueChanged<String> onSetKind;
   final ValueChanged<String> onBind;
   final VoidCallback onToggleActive;
 
@@ -335,16 +341,19 @@ class _AgentDetail extends StatefulWidget {
 
 class _AgentDetailState extends State<_AgentDetail> {
   late final TextEditingController _name;
+  late final TextEditingController _kind;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.record.name);
+    _kind = TextEditingController(text: widget.record.kind);
   }
 
   @override
   void dispose() {
     _name.dispose();
+    _kind.dispose();
     super.dispose();
   }
 
@@ -391,8 +400,23 @@ class _AgentDetailState extends State<_AgentDetail> {
         ),
         const SizedBox(height: AppTokens.spaceLg),
         _Field(
-          label: 'Kind',
-          child: Text(record.kind, style: theme.textTheme.bodyLarge),
+          label: 'Kind (editable runtime — e.g. hermes, claude, codex)',
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _kind,
+                  decoration: const InputDecoration(hintText: 'Kind'),
+                  onSubmitted: widget.onSetKind,
+                ),
+              ),
+              const SizedBox(width: AppTokens.spaceSm),
+              FilledButton(
+                onPressed: () => widget.onSetKind(_kind.text),
+                child: const Text('Save kind'),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: AppTokens.spaceLg),
         _Field(

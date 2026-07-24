@@ -141,11 +141,15 @@ class RecalledKnowledge {
     required this.supersededBy,
     required this.contradictedBy,
     required this.derivedFrom,
+    this.updatedAt = '',
   });
 
   final String id;
   final String title;
   final String body;
+
+  /// ISO-8601 last-update timestamp used to order recall freshest-first.
+  final String updatedAt;
 
   /// The agent/user that authored the Knowledge (from origin/created_by).
   final String actorId;
@@ -278,6 +282,9 @@ class MemoryRecallService {
         derivedFrom: relations is Map
             ? _ids(relations['derived_from'])
             : const [],
+        updatedAt:
+            (entity.data['updated_at'] ?? entity.data['created_at'] ?? '')
+                .toString(),
       );
       if (item.isCurrent) {
         current.add(item);
@@ -285,8 +292,15 @@ class MemoryRecallService {
         superseded.add(item);
       }
     }
-    current.sort((a, b) => a.id.compareTo(b.id));
-    superseded.sort((a, b) => a.id.compareTo(b.id));
+    // Freshest-relevant first: newer updated_at wins; id is a stable tiebreak
+    // so recall order is deterministic across a projection rebuild.
+    int byRecency(RecalledKnowledge a, RecalledKnowledge b) {
+      final byTime = b.updatedAt.compareTo(a.updatedAt);
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    }
+
+    current.sort(byRecency);
+    superseded.sort(byRecency);
     return RecallResult(current: current, superseded: superseded);
   }
 

@@ -27,6 +27,10 @@ Commands:
              re-bind an env id to this host after a salt/reinstall loss
   agent-register <workspace> <name> <kind> <env-id>
              register an Agent bound to an Environment by ENV id
+  agent-rename <workspace> <agent-id> <name>
+             edit the display name without changing the immutable id
+  agent-set-kind <workspace> <agent-id> <kind>
+             edit the runtime kind label (e.g. hermes, claude, codex)
   agent-list <workspace>
   match-propose <workspace> <subject-id> <target-id> <actor-type> <actor-id>
              [mode] [confidence] [evidence]
@@ -221,6 +225,26 @@ Commands:
           environmentId: arguments[4],
         );
         stdout.writeln('${record.id}\t${record.name}\t${record.environmentId}');
+      case 'agent-rename':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'agent-rename requires workspace, agent id and name.',
+          );
+        }
+        final record = AgentRegistryService(
+          workspace,
+        ).rename(arguments[2], arguments[3]);
+        stdout.writeln('${record.id}\t${record.name}');
+      case 'agent-set-kind':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'agent-set-kind requires workspace, agent id and kind.',
+          );
+        }
+        final record = AgentRegistryService(
+          workspace,
+        ).setKind(arguments[2], arguments[3]);
+        stdout.writeln('${record.id}\t${record.kind}');
       case 'agent-list':
         for (final record in AgentRegistryService(workspace).list()) {
           stdout.writeln(

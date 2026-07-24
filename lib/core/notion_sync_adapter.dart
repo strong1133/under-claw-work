@@ -957,6 +957,9 @@ class NotionEntityMapper {
         'title': (data['title'] ?? data['name'] ?? entity.id).toString(),
         if (data['status'] != null) 'status': data['status'],
         if (data['review_state'] != null) 'review_state': data['review_state'],
+        // The Knowledge/Reference body is the substance of the memory; carry it
+        // so the graph is editable from Notion, not just its title/status.
+        if (entity.body.trim().isNotEmpty) 'body': entity.body,
         if (relations.isNotEmpty) 'relations': relations,
       },
     );
@@ -1104,12 +1107,16 @@ class NotionCanonicalReconciler {
     }
     final title = change.properties['title'];
     final status = change.properties['status'];
+    final body = change.properties['body'];
     // Updating through EntityService preserves the id, relations, scope and
-    // origin/provenance fields — only the human-facing title/status change.
+    // origin/provenance fields — only the human-facing title/status/body change.
+    // Body is written back only when Notion carries a differing value, so a
+    // pull that never touched the body cannot blank it.
     _entities.update(
       entity,
       title: title is String && title.trim().isNotEmpty ? title : null,
       status: status is String && status.trim().isNotEmpty ? status : null,
+      body: body is String && body != entity.body ? body : null,
     );
     return NotionReconcileResult(
       canonicalId: change.canonicalId,
@@ -1169,6 +1176,12 @@ class NotionCanonicalReconciler {
     final name = change.properties['title'];
     if (name is String && name.trim().isNotEmpty) {
       _agents.rename(change.canonicalId, name);
+    }
+    // The runtime kind (hermes/claude/…) is editable metadata, not a governed
+    // state machine, so a Notion edit reconciles straight into Git canonical.
+    final kind = change.properties['kind'];
+    if (kind is String && kind.trim().isNotEmpty) {
+      _agents.setKind(change.canonicalId, kind);
     }
     final status = change.properties['status'];
     if (status is String && status.trim().isNotEmpty) {

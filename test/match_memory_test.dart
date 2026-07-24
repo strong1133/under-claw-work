@@ -68,6 +68,37 @@ void main() {
         throwsStateError,
       );
     });
+
+    test('agent name and runtime kind stay editable; id is immutable', () {
+      final env = EnvironmentService(
+        workspace,
+      ).register(identity: host, alias: 'Workstation');
+      final agents = AgentRegistryService(workspace);
+      final agent = agents.register(
+        name: 'Runner',
+        kind: 'claude',
+        environmentId: env.id,
+      );
+
+      // The "Mac vs Hermes"-style runtime discriminator must be editable.
+      final rekinded = agents.setKind(agent.id, 'hermes');
+      expect(rekinded.id, agent.id);
+      expect(rekinded.kind, 'hermes');
+
+      final renamed = agents.rename(agent.id, 'Hermes Main');
+      expect(renamed.id, agent.id);
+      expect(renamed.name, 'Hermes Main');
+      // Editing the alias/kind never disturbs the immutable id or binding.
+      expect(renamed.kind, 'hermes');
+      expect(renamed.environmentId, env.id);
+
+      // The edits survive a reload from the version-controlled registry.
+      expect(agents.get(agent.id)!.kind, 'hermes');
+      expect(agents.get(agent.id)!.name, 'Hermes Main');
+
+      // A blank kind is refused rather than silently clearing the label.
+      expect(() => agents.setKind(agent.id, '  '), throwsFormatException);
+    });
   });
 
   group('Match provenance vertical slice (requirement 2)', () {
@@ -444,6 +475,46 @@ void main() {
       final byMatch = recall.recall(taskId: 'TSK-recall');
       expect(byMatch.current.single.id, newer.id);
       expect(byMatch.current.single.provenance, startsWith('match:'));
+    });
+
+    test('recall orders current items freshest-first and resolves relations', () {
+      final data = seed();
+      final recall = MemoryRecallService(workspace);
+      // Two current facts in the same scope, one updated more recently.
+      final stale = entities.create(
+        kind: EntityKind.knowledge,
+        title: 'Earlier finding',
+        body: 'first',
+        domainId: data.domain.id,
+        milestoneId: data.milestone.id,
+        extra: {'updated_at': '2026-01-01T00:00:00.000Z'},
+      );
+      final fresh = entities.create(
+        kind: EntityKind.knowledge,
+        title: 'Later finding',
+        body: 'second',
+        domainId: data.domain.id,
+        milestoneId: data.milestone.id,
+        extra: {
+          'updated_at': '2026-07-01T00:00:00.000Z',
+          'relations': {
+            'contradicts': [stale.id],
+            'derived_from': [data.knowledge.id],
+          },
+        },
+      );
+
+      final result = recall.recall(milestoneId: data.milestone.id);
+      final ids = result.current.map((item) => item.id).toList();
+      // Freshest-relevant first: the newer updated_at sorts ahead of the older.
+      expect(ids.indexOf(fresh.id), lessThan(ids.indexOf(stale.id)));
+
+      // contradicts/derived_from are resolved for the UI to surface.
+      final freshItem = result.current.firstWhere(
+        (item) => item.id == fresh.id,
+      );
+      expect(freshItem.contradictedBy, contains(stale.id));
+      expect(freshItem.derivedFrom, contains(data.knowledge.id));
     });
   });
 

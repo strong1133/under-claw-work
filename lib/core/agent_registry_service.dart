@@ -166,6 +166,17 @@ class AgentRegistryService {
     return _mutate(id, (record) => record.copyWith(name: trimmed));
   }
 
+  /// Edits the runtime kind label (e.g. `hermes`, `claude`, `codex`). This is
+  /// the "Mac vs Hermes"-style discriminator and must stay editable; the
+  /// immutable id and Environment binding are untouched.
+  AgentRecord setKind(String id, String kind) {
+    final trimmed = kind.trim();
+    if (trimmed.isEmpty) {
+      throw const FormatException('Agent kind is required.');
+    }
+    return _mutate(id, (record) => record.copyWith(kind: trimmed));
+  }
+
   static const _allowedStatuses = {'active', 'inactive', 'retired'};
 
   AgentRecord setStatus(String id, String status) {
