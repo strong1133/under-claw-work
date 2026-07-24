@@ -306,17 +306,18 @@ class _NotionControllerAdapter implements NotionUiController {
         pulled: pulled.pulled,
       );
     } on NotionConflict catch (error) {
+      final snapshot =
+          error.snapshot ?? coordinator.conflict(error.canonicalId);
+      final conflict = snapshot == null ? null : _toConflictView(snapshot);
       _state.value = NotionSyncViewState(
         status: NotionConnectionStatus.error,
         message: 'A Notion conflict requires review.',
-        conflicts: [
-          NotionConflictView(
-            canonicalId: error.canonicalId,
-            title: 'Concurrent Notion edit',
-            gitValue: 'Git canonical value',
-            notionValue: 'Notion revision ${error.remoteRevision}',
-          ),
-        ],
+        lastSyncedAt: _state.value.lastSyncedAt,
+        pushed: _state.value.pushed,
+        pulled: _state.value.pulled,
+        conflicts: conflict == null
+            ? _state.value.conflicts
+            : _replaceConflict(_state.value.conflicts, conflict),
       );
     } on Object catch (error) {
       _state.value = NotionSyncViewState(
@@ -329,22 +330,91 @@ class _NotionControllerAdapter implements NotionUiController {
 
   @override
   Future<void> resolveConflict(
-    String canonicalId,
+    String conflictId,
     NotionConflictChoice choice,
   ) async {
-    if (choice == NotionConflictChoice.postpone) return;
-    // Resolution is deliberately routed back through the same coordinator:
-    // Git remains canonical for keepGit; applyNotion re-runs validated inbound
-    // reconciliation and commit-before-ack.
-    if (choice == NotionConflictChoice.keepGit) {
-      await coordinator.resolveKeepGit(canonicalId);
-    } else {
-      await coordinator.pullAndCommit();
+    final index = _state.value.conflicts.indexWhere(
+      (conflict) => conflict.conflictId == conflictId,
+    );
+    if (index < 0) return;
+    final conflict = _state.value.conflicts[index];
+    if (choice == NotionConflictChoice.postpone) {
+      _updateConflict(
+        conflictId,
+        conflict.copyWith(
+          status: NotionConflictCardStatus.postponed,
+          clearError: true,
+        ),
+      );
+      return;
     }
-    _state.value = NotionSyncViewState(
-      status: NotionConnectionStatus.connected,
-      message: 'Conflict resolution completed for $canonicalId.',
-      lastSyncedAt: DateTime.now(),
+    _updateConflict(
+      conflictId,
+      conflict.copyWith(
+        status: NotionConflictCardStatus.resolving,
+        clearError: true,
+      ),
+    );
+    try {
+      if (choice == NotionConflictChoice.keepGit) {
+        await coordinator.resolveKeepGit(conflict.canonicalId);
+      } else {
+        await coordinator.resolveApplyNotion(conflict.canonicalId);
+      }
+      final remaining = _state.value.conflicts
+          .where((item) => item.conflictId != conflictId)
+          .toList(growable: false);
+      _state.value = _state.value.copyWith(
+        status: remaining.isEmpty
+            ? NotionConnectionStatus.connected
+            : NotionConnectionStatus.error,
+        message: 'Conflict resolution completed for ${conflict.canonicalId}.',
+        lastSyncedAt: DateTime.now(),
+        conflicts: remaining,
+      );
+    } on Object catch (error) {
+      _updateConflict(
+        conflictId,
+        conflict.copyWith(
+          status: NotionConflictCardStatus.failed,
+          errorMessage: '$error',
+        ),
+      );
+    }
+  }
+
+  static NotionConflictView _toConflictView(
+    NotionConflictSnapshot snapshot,
+  ) => NotionConflictView(
+    conflictId: snapshot.conflictId,
+    canonicalId: snapshot.canonicalId,
+    type: snapshot.type,
+    remoteRevision: snapshot.remoteRevision,
+    gitProperties: snapshot.gitProperties,
+    notionProperties: snapshot.notionProperties,
+    authoritativeFields: switch (snapshot.type) {
+      'environment' => const {'canonical_id', 'type', 'machine_key', 'kind'},
+      'agent' => const {'canonical_id', 'type', 'kind', 'relations'},
+      'match' => const {'canonical_id', 'type', 'review_state', 'relations'},
+      _ => const {'canonical_id', 'type', 'relations'},
+    },
+  );
+
+  static List<NotionConflictView> _replaceConflict(
+    List<NotionConflictView> conflicts,
+    NotionConflictView replacement,
+  ) => [
+    for (final conflict in conflicts)
+      if (conflict.canonicalId != replacement.canonicalId) conflict,
+    replacement,
+  ];
+
+  void _updateConflict(String conflictId, NotionConflictView replacement) {
+    _state.value = _state.value.copyWith(
+      conflicts: [
+        for (final conflict in _state.value.conflicts)
+          if (conflict.conflictId == conflictId) replacement else conflict,
+      ],
     );
   }
 

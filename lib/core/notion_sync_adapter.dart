@@ -78,14 +78,77 @@ class NotionConflict implements Exception {
   const NotionConflict(
     this.canonicalId,
     this.baseRevision,
-    this.remoteRevision,
-  );
+    this.remoteRevision, [
+    this.snapshot,
+  ]);
   final String canonicalId;
   final String baseRevision;
   final String remoteRevision;
+  final NotionConflictSnapshot? snapshot;
   @override
   String toString() =>
       'NotionConflict($canonicalId: base=$baseRevision remote=$remoteRevision)';
+}
+
+/// Immutable, review-safe view of one divergent Git/Notion entity.
+class NotionConflictSnapshot {
+  NotionConflictSnapshot({
+    required this.canonicalId,
+    required this.type,
+    required this.pageId,
+    required this.baseRevision,
+    required this.remoteRevision,
+    required Map<String, Object?> gitProperties,
+    required Map<String, Object?> notionProperties,
+    required this.gitArchived,
+    required this.archived,
+  }) : gitProperties = _freezeMap(_allowlisted(gitProperties)),
+       notionProperties = _freezeMap(_allowlisted(notionProperties));
+
+  static const _allowedProperties = {
+    'canonical_id',
+    'type',
+    'title',
+    'status',
+    'review_state',
+    'relations',
+    'kind',
+    'machine_key',
+    'capabilities',
+  };
+
+  final String canonicalId;
+  final String type;
+  final String pageId;
+  final String baseRevision;
+  final String remoteRevision;
+  final Map<String, Object?> gitProperties;
+  final Map<String, Object?> notionProperties;
+  final bool gitArchived;
+  final bool archived;
+
+  String get conflictId => '$canonicalId@$remoteRevision';
+
+  static Map<String, Object?> _allowlisted(Map<String, Object?> properties) => {
+    for (final entry in properties.entries)
+      if (_allowedProperties.contains(entry.key)) entry.key: entry.value,
+  };
+
+  static Map<String, Object?> _freezeMap(Map<String, Object?> value) =>
+      Map.unmodifiable({
+        for (final entry in value.entries) entry.key: _freeze(entry.value),
+      });
+
+  static Object? _freeze(Object? value) {
+    if (value is Map) {
+      return Map.unmodifiable({
+        for (final entry in value.entries)
+          entry.key.toString(): _freeze(entry.value),
+      });
+    }
+    if (value is List) return List.unmodifiable(value.map(_freeze));
+    return value;
+  }
 }
 
 /// Maps canonical entity types to Notion database ids. Ids are injected, never
@@ -645,7 +708,22 @@ class NotionSyncAdapter {
     if (!overwriteRemote &&
         remote.revision != base &&
         !_isOwnOrigin(remote.origin)) {
-      throw NotionConflict(entity.canonicalId, base, remote.revision);
+      throw NotionConflict(
+        entity.canonicalId,
+        base,
+        remote.revision,
+        NotionConflictSnapshot(
+          canonicalId: entity.canonicalId,
+          type: entity.type,
+          pageId: remote.pageId,
+          baseRevision: base,
+          remoteRevision: remote.revision,
+          gitProperties: entity.properties,
+          notionProperties: remote.properties,
+          gitArchived: entity.deleted,
+          archived: remote.archived,
+        ),
+      );
     }
     final page = await client.updatePage(
       token,
@@ -674,6 +752,82 @@ class NotionSyncAdapter {
       deleted: true,
     ),
   );
+
+  /// Applies the reviewed Git side only if the remote is still the exact
+  /// revision the user reviewed.
+  Future<NotionPushResult> resolveKeepGit(
+    NotionConflictSnapshot conflict,
+  ) async {
+    final token = await _requireToken();
+    final remote = await client.page(token, conflict.pageId);
+    if (remote == null || remote.canonicalId != conflict.canonicalId) {
+      throw NotionSyncException(
+        'The reviewed Notion page is no longer available for '
+        '${conflict.conflictId}.',
+      );
+    }
+    if (remote.revision != conflict.remoteRevision) {
+      throw NotionConflict(
+        conflict.canonicalId,
+        conflict.remoteRevision,
+        remote.revision,
+      );
+    }
+    final page = await client.updatePage(
+      token,
+      pageId: conflict.pageId,
+      expectedRevision: conflict.remoteRevision,
+      origin: _nextOrigin(),
+      properties: conflict.gitProperties,
+      archived: conflict.gitArchived,
+    );
+    state.bind(conflict.canonicalId, page.pageId, page.revision);
+    return NotionPushResult(
+      canonicalId: conflict.canonicalId,
+      pageId: page.pageId,
+      created: false,
+      revision: page.revision,
+      archived: page.archived,
+    );
+  }
+
+  /// Applies the reviewed Notion side through Core and binds only this page
+  /// after the Git commit succeeds. The global pull cursor is never advanced.
+  Future<String> resolveApplyNotion(
+    NotionConflictSnapshot conflict, {
+    required NotionCanonicalReconciler reconciler,
+    required Future<String> Function() commit,
+  }) async {
+    final token = await _requireToken();
+    final remote = await client.page(token, conflict.pageId);
+    if (remote == null || remote.canonicalId != conflict.canonicalId) {
+      throw NotionSyncException(
+        'The reviewed Notion page is no longer available for '
+        '${conflict.conflictId}.',
+      );
+    }
+    if (remote.revision != conflict.remoteRevision) {
+      throw NotionConflict(
+        conflict.canonicalId,
+        conflict.remoteRevision,
+        remote.revision,
+      );
+    }
+    reconciler.apply(
+      NotionInboundChange(
+        canonicalId: conflict.canonicalId,
+        pageId: conflict.pageId,
+        type: conflict.type,
+        properties: conflict.notionProperties,
+        archived: conflict.archived,
+        remoteRevision: conflict.remoteRevision,
+        origin: remote.origin,
+      ),
+    );
+    final head = await commit();
+    state.bind(conflict.canonicalId, conflict.pageId, conflict.remoteRevision);
+    return head;
+  }
 
   /// Pulls Notion edits made since the last cursor, skipping pages we ourselves
   /// last wrote (echo-loop prevention). Returns inbound changes for the caller

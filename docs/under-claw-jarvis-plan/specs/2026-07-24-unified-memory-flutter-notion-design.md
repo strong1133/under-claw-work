@@ -96,6 +96,48 @@ Environment/Agent/Match/Recall 서비스와 schema는 이미 부합하므로 기
    - 작업: 각 모듈의 비작업 참여자
    - 검증: 설계 대비 누락/과구현, secret·Git 정본·commit-before-ack 불변조건
 
+### 후속 교정 task (2026-07-24)
+
+5. **실데이터 Notion conflict snapshot**
+   - 작업: DOMAIN_READER
+   - 파일: `lib/core/notion_sync_adapter.dart`,
+     `lib/core/notion_sync_coordinator.dart`, Core tests
+   - 계약: `canonicalId@remoteRevision`으로 검토 대상을 고정하고 Git/Notion의
+     mirror allowlist properties를 immutable snapshot으로 반환한다. 별도 conflict
+     JSON은 만들지 않으며 token과 secret locator는 포함하지 않는다. salted
+     `machine_key`는 추가 요구의 환경 고유 identity이자 기존 Notion mirror
+     property이므로 snapshot에 표시하되 authoritative/read-only로 취급하고
+     Notion 값을 Git에 적용하지 않는다.
+   - 검증: 검토 뒤 remote revision이 바뀌면 Keep Git과 Apply Notion 모두 거부한다.
+6. **대상별 conflict disposition**
+   - 작업: DOMAIN_READER
+   - 파일: 위 Core 파일과 coordinator tests
+   - 계약: Keep Git은 검토한 revision만 덮어쓰고, Apply Notion은 단일 snapshot을
+     validate → canonical write → Git commit → 해당 binding 저장 순서로 처리한다.
+     전체 pull cursor와 다른 remote change는 건드리지 않는다. Postpone은 무변경이다.
+   - 검증: commit 실패 시 binding/cursor가 유지되고 재시도가 안전하며, 성공 시
+     해당 revision만 중복 적용되지 않는다.
+7. **property diff conflict UI**
+   - 작업: UI_INTEGRATION_READER
+   - 파일: `lib/ui/notion_sync_port.dart`, `lib/ui/notion_screens.dart`,
+     `lib/main.dart`, UI tests
+   - 계약: placeholder 문자열 대신 달라진 property의 Git/Notion 값을 표시하고,
+     성공한 카드만 제거한다. authoritative field는 Apply Notion을 비활성화한다.
+   - 검증: widget test에서 실제 diff, revision drift 오류, postpone 유지와 카드별
+     성공 제거를 확인한다.
+8. **통합·독립 검수**
+   - 작업: ORCHESTRATOR 및 비작업 참여자
+   - 검증: format, analyze, 전체 test, font provenance, secret scan. 인증 provider,
+     Hermes acceptance, signed artifact와 live Notion credential은 기존 외부 gate를
+     유지하며 완료로 주장하지 않는다.
+
+후속 교정에서 버린 대안:
+
+- `Apply Notion = pullAndCommit()` 전체 재실행: 검토하지 않은 다른 change까지 함께
+  적용할 수 있어 canonical ID별 disposition 의미를 깨므로 제외한다.
+- conflict snapshot 로컬 영속: 다음 explicit sync가 미진행 remote revision을 다시
+  발견할 수 있고 업무 값을 별도 JSON에 중복 저장할 이유가 없으므로 제외한다.
+
 ## 8. 구현·검수 결과
 
 - Core 요구 1~3은 기존 ENV/Agent, Match, Recall 구현을 보존했고 전체 회귀 테스트로 재검증했다.
@@ -107,3 +149,14 @@ Environment/Agent/Match/Recall 서비스와 schema는 이미 부합하므로 기
 - 후속 재검수(2026-07-24): 독립 코드 검증에서 `MatchService.propose`(manual/agent)가 서비스·테스트에만 존재하고 앱에서 호출되지 않아 요구2의 "사용자가 매칭하거나 agent가 매칭"이 실제로는 도달 불가능한 결함을 발견했다. Match 화면에 사용자 수동 매칭 생성(`New match` 다이얼로그 → `propose(mode: manual, actorType: user)`)과 agent 자동매칭(`Auto-match` → label 용어 겹침 heuristic으로 근거·신뢰도를 채운 `propose(mode: agent)`, 검토 게이트 유지를 위해 `proposed` 상태로 제안)을 배선하고, `subjectCandidates`/`targetCandidates`/`autoMatch` core API와 core·widget 회귀 테스트 4건을 추가했다.
 - 최종 실행 결과: format PASS, analyze PASS, Flutter 148 tests PASS, font provenance PASS, secret scan PASS, golden 갱신(Match 화면 상단 액션 2개 추가).
 - macOS debug artifact는 Keychain entitlement에 필요한 development signing identity가 없어 unsigned 환경에서 실패했다. secure token을 파일로 fallback하지 않으며 signed build와 live Notion credential smoke를 외부 acceptance로 유지한다.
+- Notion conflict 후속 교정(2026-07-24): placeholder 충돌 카드와 전체
+  `pullAndCommit()` 재실행을 제거했다. 실제 allowlist property snapshot,
+  `canonicalId@remoteRevision` exact fence, 대상별 Keep Git/Apply Notion/Postpone,
+  property diff UI와 카드별 상태를 구현했다. Apply Notion은 단일 change를 Core로
+  검증한 뒤 Git commit 성공 시에만 해당 page binding을 저장하고 global cursor는
+  움직이지 않는다. reconcile 또는 commit 실패 시 type별 canonical backing file의
+  존재 여부와 exact bytes를 복구한다.
+- 후속 교정 실행 결과: format PASS, analyze PASS, Flutter 155 tests PASS,
+  font provenance PASS, secret scan PASS. 기존 `commitCanonical`이 commit 실패 전
+  stage한 Git index까지 복구하는 문제는 사용자 staged state 보존을 포함한 별도
+  transaction 설계가 필요해 잔여 hardening으로 남긴다.

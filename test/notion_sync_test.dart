@@ -137,12 +137,12 @@ void main() {
         // A third party edits the page after our last sync base.
         client.simulateRemoteEdit(push.pageId, {'title': 'human edit'});
 
-        expect(
-          () => adapter.push(
+        await expectLater(
+          adapter.push(
             const NotionSyncEntity(
               canonicalId: 'REF-1',
               type: 'reference',
-              properties: {'title': 'v2'},
+              properties: {'title': 'v2', 'ignored_private': 'do not copy'},
             ),
           ),
           throwsA(isA<NotionConflict>()),
@@ -151,6 +151,88 @@ void main() {
         expect(
           (await client.page(token, push.pageId))!.properties['title'],
           'human edit',
+        );
+      },
+    );
+
+    test(
+      'conflict carries immutable allowlisted Git and Notion snapshots',
+      () async {
+        final client = FakeNotionClient(token);
+        final adapter = buildAdapter(client);
+        final push = await adapter.push(
+          const NotionSyncEntity(
+            canonicalId: 'REF-snapshot',
+            type: 'reference',
+            properties: {'title': 'Git', 'ignored_private': 'git-private'},
+          ),
+        );
+        client.simulateRemoteEdit(push.pageId, {
+          'title': 'Notion',
+          'ignored_private': 'notion-private',
+        });
+
+        NotionConflict? conflict;
+        try {
+          await adapter.push(
+            const NotionSyncEntity(
+              canonicalId: 'REF-snapshot',
+              type: 'reference',
+              properties: {
+                'title': 'Git next',
+                'ignored_private': 'git-private',
+              },
+            ),
+          );
+        } on NotionConflict catch (error) {
+          conflict = error;
+        }
+
+        final snapshot = conflict!.snapshot!;
+        expect(snapshot.conflictId, 'REF-snapshot@${snapshot.remoteRevision}');
+        expect(snapshot.gitProperties, {'title': 'Git next'});
+        expect(snapshot.notionProperties, {'title': 'Notion'});
+        expect(
+          () => snapshot.gitProperties['title'] = 'mutated',
+          throwsUnsupportedError,
+        );
+      },
+    );
+
+    test(
+      'reviewed Keep Git is fenced to the inspected remote revision',
+      () async {
+        final client = FakeNotionClient(token);
+        final adapter = buildAdapter(client);
+        final push = await adapter.push(
+          const NotionSyncEntity(
+            canonicalId: 'REF-fence',
+            type: 'reference',
+            properties: {'title': 'Git'},
+          ),
+        );
+        client.simulateRemoteEdit(push.pageId, {'title': 'reviewed'});
+        NotionConflict? conflict;
+        try {
+          await adapter.push(
+            const NotionSyncEntity(
+              canonicalId: 'REF-fence',
+              type: 'reference',
+              properties: {'title': 'Git next'},
+            ),
+          );
+        } on NotionConflict catch (error) {
+          conflict = error;
+        }
+        client.simulateRemoteEdit(push.pageId, {'title': 'newer'});
+
+        await expectLater(
+          adapter.resolveKeepGit(conflict!.snapshot!),
+          throwsA(isA<NotionConflict>()),
+        );
+        expect(
+          (await client.page(token, push.pageId))!.properties['title'],
+          'newer',
         );
       },
     );

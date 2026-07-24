@@ -46,6 +46,7 @@ class NotionSyncCoordinator {
   final NotionSecretStore secretStore;
   final NotionLocalConfigStore configStore;
   final Future<String> Function() commitCanonical;
+  final Map<String, NotionConflictSnapshot> _conflicts = {};
 
   final StreamController<NotionSyncStatus> _statuses =
       StreamController<NotionSyncStatus>.broadcast();
@@ -53,6 +54,9 @@ class NotionSyncCoordinator {
   Stream<NotionSyncStatus> watchStatus() => _statuses.stream;
 
   Future<void> dispose() => _statuses.close();
+
+  NotionConflictSnapshot? conflict(String canonicalId) =>
+      _conflicts[canonicalId];
 
   Future<NotionSyncStatus> connect(NotionLocalConfig config) async {
     _statuses.add(const NotionSyncStatus(NotionSyncPhase.connecting));
@@ -108,6 +112,8 @@ class NotionSyncCoordinator {
       _statuses.add(const NotionSyncStatus(NotionSyncPhase.idle));
       return NotionSyncReport(pushed: pushed, pulled: 0);
     } on NotionConflict catch (error) {
+      final snapshot = error.snapshot;
+      if (snapshot != null) _conflicts[snapshot.canonicalId] = snapshot;
       _statuses.add(
         NotionSyncStatus(NotionSyncPhase.conflict, message: '$error'),
       );
@@ -163,33 +169,72 @@ class NotionSyncCoordinator {
   /// method makes the user's reviewed disposition visible at the API boundary.
   Future<void> resolveKeepGit(String canonicalId) async {
     final adapter = _adapter();
-    final mapper = const NotionEntityMapper();
-    NotionSyncEntity? entity;
-    CanonicalEntity? canonical;
-    for (final candidate in CanonicalRepository(workspace).list()) {
-      if (candidate.id == canonicalId) {
-        canonical = candidate;
-        break;
-      }
-    }
-    if (canonical != null) {
-      entity = mapper.fromCanonical(canonical);
-    } else {
-      final task = TaskRepository(workspace).get(canonicalId);
-      if (task != null) entity = mapper.fromTask(task);
-      final environment = EnvironmentService(workspace).get(canonicalId);
-      if (environment != null) entity = mapper.fromEnvironment(environment);
-      final agent = AgentRegistryService(workspace).get(canonicalId);
-      if (agent != null) entity = mapper.fromAgent(agent);
-    }
-    if (entity == null) {
+    final conflict = _conflicts[canonicalId];
+    if (conflict == null) {
       throw NotionSyncException(
-        'No Git canonical entity exists for $canonicalId.',
+        'No reviewed Notion conflict exists for $canonicalId.',
       );
     }
-    await adapter.push(entity, overwriteRemote: true);
+    await adapter.resolveKeepGit(conflict);
     _save(adapter);
+    _conflicts.remove(canonicalId);
     _statuses.add(const NotionSyncStatus(NotionSyncPhase.idle));
+  }
+
+  Future<String> resolveApplyNotion(String canonicalId) async {
+    final adapter = _adapter();
+    final conflict = _conflicts[canonicalId];
+    if (conflict == null) {
+      throw NotionSyncException(
+        'No reviewed Notion conflict exists for $canonicalId.',
+      );
+    }
+    final rollback = _CanonicalRollback.capture(_backingFiles(conflict));
+    late final String head;
+    try {
+      head = await adapter.resolveApplyNotion(
+        conflict,
+        reconciler: NotionCanonicalReconciler(workspace),
+        commit: commitCanonical,
+      );
+    } on Object {
+      rollback.restore();
+      rethrow;
+    }
+    _save(adapter);
+    _conflicts.remove(canonicalId);
+    _statuses.add(const NotionSyncStatus(NotionSyncPhase.idle));
+    return head;
+  }
+
+  List<File> _backingFiles(NotionConflictSnapshot conflict) {
+    if (conflict.type == 'task') {
+      final nested = File(
+        '${workspace.tasks.path}/${conflict.canonicalId}/task.yaml',
+      );
+      final legacy = File(
+        '${workspace.tasks.path}/${conflict.canonicalId}.yaml',
+      );
+      return [nested.existsSync() ? nested : legacy];
+    }
+    if (conflict.type == 'environment') {
+      return [File('${workspace.config.path}/environments.yaml')];
+    }
+    if (conflict.type == 'agent') {
+      return [File('${workspace.config.path}/agents.yaml')];
+    }
+    final kind = switch (conflict.type) {
+      'domain' => EntityKind.domain,
+      'milestone' => EntityKind.milestone,
+      'objective' => EntityKind.objective,
+      'knowledge' => EntityKind.knowledge,
+      'reference' => EntityKind.reference,
+      'match' => EntityKind.match,
+      _ => throw NotionSyncException(
+        'No canonical backing file for ${conflict.type}.',
+      ),
+    };
+    return [CanonicalRepository(workspace).fileFor(kind, conflict.canonicalId)];
   }
 
   NotionSyncAdapter _adapter() {
@@ -214,4 +259,34 @@ class NotionSyncCoordinator {
       File('${workspace.local.path}/notion-sync.json'),
     ).save(adapter.state);
   }
+}
+
+class _CanonicalRollback {
+  _CanonicalRollback(this._snapshots);
+
+  factory _CanonicalRollback.capture(List<File> files) => _CanonicalRollback([
+    for (final file in files)
+      _FileSnapshot(file, file.existsSync() ? file.readAsBytesSync() : null),
+  ]);
+
+  final List<_FileSnapshot> _snapshots;
+
+  void restore() {
+    for (final snapshot in _snapshots) {
+      final bytes = snapshot.bytes;
+      if (bytes == null) {
+        if (snapshot.file.existsSync()) snapshot.file.deleteSync();
+        continue;
+      }
+      snapshot.file.parent.createSync(recursive: true);
+      snapshot.file.writeAsBytesSync(bytes, flush: true);
+    }
+  }
+}
+
+class _FileSnapshot {
+  const _FileSnapshot(this.file, this.bytes);
+
+  final File file;
+  final List<int>? bytes;
 }

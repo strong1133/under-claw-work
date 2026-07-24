@@ -165,42 +165,84 @@ class NotionConflictViewScreen extends StatelessWidget {
         if (state.conflicts.isEmpty) const Text('No unresolved conflicts.'),
         for (final conflict in state.conflicts)
           Card(
+            key: Key('notion-conflict-${conflict.conflictId}'),
             child: Padding(
               padding: const EdgeInsets.all(AppTokens.spaceLg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${conflict.title} · ${conflict.canonicalId}',
+                    '${conflict.type} · ${conflict.canonicalId}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  Text('Git: ${conflict.gitValue}'),
-                  Text('Notion: ${conflict.notionValue}'),
+                  Text('Notion revision ${conflict.remoteRevision}'),
+                  const SizedBox(height: AppTokens.spaceSm),
+                  for (final property in _differingProperties(conflict))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppTokens.spaceSm),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            property,
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          Text(
+                            'Git: ${_display(conflict.gitProperties[property])}',
+                          ),
+                          Text(
+                            'Notion: ${_display(conflict.notionProperties[property])}',
+                          ),
+                          if (conflict.authoritativeFields.contains(property))
+                            const Text(
+                              'Git authoritative · Notion cannot apply this field.',
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (conflict.status == NotionConflictCardStatus.postponed)
+                    const Text('Postponed · no data was changed.'),
+                  if (conflict.errorMessage != null)
+                    Text(
+                      conflict.errorMessage!,
+                      key: Key('notion-conflict-error-${conflict.conflictId}'),
+                    ),
                   const SizedBox(height: AppTokens.spaceMd),
                   Wrap(
                     spacing: AppTokens.spaceSm,
                     children: [
                       FilledButton(
-                        onPressed: () => controller.resolveConflict(
-                          conflict.canonicalId,
-                          NotionConflictChoice.keepGit,
-                        ),
+                        onPressed:
+                            conflict.status ==
+                                NotionConflictCardStatus.resolving
+                            ? null
+                            : () => controller.resolveConflict(
+                                conflict.conflictId,
+                                NotionConflictChoice.keepGit,
+                              ),
                         child: const Text('Keep Git'),
                       ),
                       OutlinedButton(
-                        onPressed: conflict.authoritative
+                        onPressed:
+                            conflict.status ==
+                                    NotionConflictCardStatus.resolving ||
+                                _hasAuthoritativeDifference(conflict)
                             ? null
                             : () => controller.resolveConflict(
-                                conflict.canonicalId,
+                                conflict.conflictId,
                                 NotionConflictChoice.applyNotion,
                               ),
                         child: const Text('Apply Notion'),
                       ),
                       TextButton(
-                        onPressed: () => controller.resolveConflict(
-                          conflict.canonicalId,
-                          NotionConflictChoice.postpone,
-                        ),
+                        onPressed:
+                            conflict.status ==
+                                NotionConflictCardStatus.resolving
+                            ? null
+                            : () => controller.resolveConflict(
+                                conflict.conflictId,
+                                NotionConflictChoice.postpone,
+                              ),
                         child: const Text('Postpone'),
                       ),
                     ],
@@ -212,4 +254,55 @@ class NotionConflictViewScreen extends StatelessWidget {
       ],
     ),
   );
+
+  static List<String> _differingProperties(NotionConflictView conflict) {
+    final keys = <String>{
+      ...conflict.gitProperties.keys,
+      ...conflict.notionProperties.keys,
+    };
+    return keys
+        .where(
+          (key) => !_valuesEqual(
+            conflict.gitProperties[key],
+            conflict.notionProperties[key],
+          ),
+        )
+        .toList()
+      ..sort();
+  }
+
+  static bool _hasAuthoritativeDifference(NotionConflictView conflict) =>
+      _differingProperties(conflict).any(conflict.authoritativeFields.contains);
+
+  static bool _valuesEqual(Object? left, Object? right) {
+    if (identical(left, right) || left == right) return true;
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var index = 0; index < left.length; index++) {
+        if (!_valuesEqual(left[index], right[index])) return false;
+      }
+      return true;
+    }
+    if (left is Map && right is Map) {
+      if (left.length != right.length) return false;
+      for (final key in left.keys) {
+        if (!right.containsKey(key) || !_valuesEqual(left[key], right[key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  static String _display(Object? value) {
+    if (value == null) return '—';
+    if (value is Iterable) return value.join(', ');
+    if (value is Map) {
+      final entries = value.entries.toList()
+        ..sort((left, right) => '${left.key}'.compareTo('${right.key}'));
+      return entries.map((entry) => '${entry.key}: ${entry.value}').join(', ');
+    }
+    return '$value';
+  }
 }

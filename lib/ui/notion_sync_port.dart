@@ -10,6 +10,8 @@ enum NotionConnectionStatus {
 
 enum NotionConflictChoice { keepGit, applyNotion, postpone }
 
+enum NotionConflictCardStatus { pending, resolving, postponed, failed }
+
 @immutable
 class NotionConnectionDraft {
   const NotionConnectionDraft({
@@ -26,18 +28,42 @@ class NotionConnectionDraft {
 @immutable
 class NotionConflictView {
   const NotionConflictView({
+    required this.conflictId,
     required this.canonicalId,
-    required this.title,
-    required this.gitValue,
-    required this.notionValue,
-    this.authoritative = false,
+    required this.type,
+    required this.remoteRevision,
+    required this.gitProperties,
+    required this.notionProperties,
+    this.authoritativeFields = const {},
+    this.status = NotionConflictCardStatus.pending,
+    this.errorMessage,
   });
 
+  final String conflictId;
   final String canonicalId;
-  final String title;
-  final String gitValue;
-  final String notionValue;
-  final bool authoritative;
+  final String type;
+  final String remoteRevision;
+  final Map<String, Object?> gitProperties;
+  final Map<String, Object?> notionProperties;
+  final Set<String> authoritativeFields;
+  final NotionConflictCardStatus status;
+  final String? errorMessage;
+
+  NotionConflictView copyWith({
+    NotionConflictCardStatus? status,
+    String? errorMessage,
+    bool clearError = false,
+  }) => NotionConflictView(
+    conflictId: conflictId,
+    canonicalId: canonicalId,
+    type: type,
+    remoteRevision: remoteRevision,
+    gitProperties: gitProperties,
+    notionProperties: notionProperties,
+    authoritativeFields: authoritativeFields,
+    status: status ?? this.status,
+    errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+  );
 }
 
 @immutable
@@ -57,6 +83,22 @@ class NotionSyncViewState {
   final int pushed;
   final int pulled;
   final List<NotionConflictView> conflicts;
+
+  NotionSyncViewState copyWith({
+    NotionConnectionStatus? status,
+    String? message,
+    DateTime? lastSyncedAt,
+    int? pushed,
+    int? pulled,
+    List<NotionConflictView>? conflicts,
+  }) => NotionSyncViewState(
+    status: status ?? this.status,
+    message: message ?? this.message,
+    lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+    pushed: pushed ?? this.pushed,
+    pulled: pulled ?? this.pulled,
+    conflicts: conflicts ?? this.conflicts,
+  );
 }
 
 /// UI-facing boundary. The composition root adapts the Core coordinator to this
@@ -68,5 +110,5 @@ abstract interface class NotionUiController {
 
   Future<void> syncNow();
 
-  Future<void> resolveConflict(String canonicalId, NotionConflictChoice choice);
+  Future<void> resolveConflict(String conflictId, NotionConflictChoice choice);
 }

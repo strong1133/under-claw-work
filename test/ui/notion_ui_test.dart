@@ -32,10 +32,10 @@ class _FakeNotionController implements NotionUiController {
 
   @override
   Future<void> resolveConflict(
-    String canonicalId,
+    String conflictId,
     NotionConflictChoice choice,
   ) async {
-    resolutions.add((canonicalId, choice));
+    resolutions.add((conflictId, choice));
   }
 }
 
@@ -142,17 +142,70 @@ void main() {
     );
   });
 
-  testWidgets('conflict view protects authoritative fields', (tester) async {
+  testWidgets(
+    'conflict view renders real differences and protects authoritative fields',
+    (tester) async {
+      final controller = _FakeNotionController();
+      controller.notifier.value = const NotionSyncViewState(
+        status: NotionConnectionStatus.connected,
+        conflicts: [
+          NotionConflictView(
+            conflictId: 'ENV-one@r2',
+            canonicalId: 'ENV-one',
+            type: 'environment',
+            remoteRevision: 'r2',
+            gitProperties: {'title': 'Local Mac', 'machine_key': 'MK-git'},
+            notionProperties: {
+              'title': 'Studio Mac',
+              'machine_key': 'MK-notion',
+            },
+            authoritativeFields: {'machine_key'},
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        _app(NotionConflictViewScreen(controller: controller)),
+      );
+
+      final apply = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Apply Notion'),
+      );
+      expect(apply.onPressed, isNull);
+      expect(find.text('Git: Local Mac'), findsOneWidget);
+      expect(find.text('Notion: Studio Mac'), findsOneWidget);
+      expect(
+        find.text('Git authoritative · Notion cannot apply this field.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Keep Git'));
+      expect(controller.resolutions, [
+        ('ENV-one@r2', NotionConflictChoice.keepGit),
+      ]);
+    },
+  );
+
+  testWidgets('postpone targets one conflict and keeps its snapshot visible', (
+    tester,
+  ) async {
     final controller = _FakeNotionController();
     controller.notifier.value = const NotionSyncViewState(
-      status: NotionConnectionStatus.connected,
+      status: NotionConnectionStatus.error,
       conflicts: [
         NotionConflictView(
-          canonicalId: 'ENV-one',
-          title: 'Machine key',
-          gitValue: 'MK-git',
-          notionValue: 'MK-notion',
-          authoritative: true,
+          conflictId: 'DOM-one@r3',
+          canonicalId: 'DOM-one',
+          type: 'domain',
+          remoteRevision: 'r3',
+          gitProperties: {'title': 'Git title'},
+          notionProperties: {'title': 'Notion title'},
+        ),
+        NotionConflictView(
+          conflictId: 'DOM-two@r4',
+          canonicalId: 'DOM-two',
+          type: 'domain',
+          remoteRevision: 'r4',
+          gitProperties: {'title': 'Second Git title'},
+          notionProperties: {'title': 'Second Notion title'},
         ),
       ],
     );
@@ -160,11 +213,14 @@ void main() {
       _app(NotionConflictViewScreen(controller: controller)),
     );
 
-    final apply = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Apply Notion'),
+    final firstCard = find.byKey(const Key('notion-conflict-DOM-one@r3'));
+    await tester.tap(
+      find.descendant(of: firstCard, matching: find.text('Postpone')),
     );
-    expect(apply.onPressed, isNull);
-    await tester.tap(find.text('Keep Git'));
-    expect(controller.resolutions, [('ENV-one', NotionConflictChoice.keepGit)]);
+
+    expect(controller.resolutions, [
+      ('DOM-one@r3', NotionConflictChoice.postpone),
+    ]);
+    expect(find.byType(Card), findsNWidgets(2));
   });
 }
