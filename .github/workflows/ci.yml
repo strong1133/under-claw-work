@@ -24,6 +24,8 @@ jobs:
       # Golden baselines are generated on the pinned development environment;
       # cross-platform CI verifies deterministic functional tests only.
       - run: flutter test --exclude-tags=golden
+        env:
+          UNDER_CLAW_PARENT_SENTINEL: must-not-reach-release-helpers
       - run: dart build cli -o build/cli
       - if: runner.os == 'macOS'
         run: flutter build macos

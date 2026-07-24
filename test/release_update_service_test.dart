@@ -80,11 +80,29 @@ void main() {
   });
 }
 
-const _environmentGuard = '''
+final _environmentGuard = '''
 [[ -z "\${BASH_ENV:-}" && -z "\${ENV:-}" ]]
+[[ -z "\${UNDER_CLAW_PARENT_SENTINEL:-}" ]]
+[[ "\$LC_ALL" == C ]]
+${Platform.isWindows ? _windowsPathGuard : _posixPathGuard}''';
+
+const _posixPathGuard = '''
 [[ "\$HOME" == / ]]
 [[ "\$PATH" == /usr/bin:/bin ]]
-[[ "\$LC_ALL" == C ]]
+''';
+
+const _windowsPathGuard = '''
+[[ "\$(cygpath -a -u "\$HOME")" == / ]]
+normalized_path="\$(cygpath -p -u "\$PATH")"
+[[ ":\$normalized_path:" == *:/usr/bin:* ]]
+[[ ":\$normalized_path:" == *:/bin:* ]]
+IFS=: read -r -a path_entries <<< "\$normalized_path"
+for path_entry in "\${path_entries[@]}"; do
+  case "\$path_entry" in
+    /mingw32/bin|/mingw64/bin|/usr/bin|/bin) ;;
+    *) exit 1 ;;
+  esac
+done
 ''';
 
 void _script(File file, String body) {
