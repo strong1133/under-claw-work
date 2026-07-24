@@ -50,6 +50,18 @@ void main() {
     );
   });
 
+  test('reads canonical Markdown checked out with Windows line endings', () {
+    final repository = CanonicalRepository(workspace);
+    final domain = repository.list(EntityKind.domain).single;
+    final file = repository.fileFor(EntityKind.domain, domain.id);
+    file.writeAsStringSync(
+      file.readAsStringSync().replaceAll('\n', '\r\n'),
+      flush: true,
+    );
+
+    expect(repository.list(EntityKind.domain).single.id, domain.id);
+  });
+
   test('rejects a pre-existing staged index without changing it', () async {
     final note = File(p.join(local.path, 'note.txt'))
       ..writeAsStringSync('note');
