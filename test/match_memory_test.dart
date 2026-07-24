@@ -247,6 +247,60 @@ void main() {
       expect(again.where((m) => m.targetId == domain.id), isEmpty);
     });
 
+    test('a user approving an agent match records hybrid (both) provenance', () {
+      seed();
+      final domain = entities.create(
+        kind: EntityKind.domain,
+        title: 'Filing Portal',
+      );
+      entities.create(
+        kind: EntityKind.knowledge,
+        title: 'Filing Portal notes',
+        body: 'Portal onboarding.',
+        domainId: domain.id,
+      );
+      final matches = MatchService(workspace);
+      final proposed = matches
+          .autoMatch(actorId: 'agent:auto')
+          .firstWhere((m) => m.targetId == domain.id);
+      expect(proposed.matchMode, 'agent');
+
+      // A human confirming the agent's proposal makes the link genuinely
+      // collaborative — requirement 2's "both user and agent" path.
+      final approved = matches.approve(
+        proposed.id,
+        actorType: 'user',
+        actorId: 'user:reviewer',
+      );
+      expect(approved.matchMode, 'hybrid');
+      expect(approved.reviewState, 'approved');
+      // Evidence from the agent proposal is preserved so hybrid stays explainable.
+      expect(approved.evidence.toLowerCase(), contains('portal'));
+      // The hybrid provenance survives a reload from the Git-canonical store.
+      expect(matches.get(proposed.id)!.matchMode, 'hybrid');
+
+      // Promotion is specific to agent->user approval: a manual match a user
+      // approves stays 'manual', never spuriously promoted.
+      final manualSubject = entities.create(
+        kind: EntityKind.knowledge,
+        title: 'Manual note',
+        body: 'authored by a person',
+        domainId: domain.id,
+      );
+      final manual = matches.propose(
+        subjectId: manualSubject.id,
+        targetId: domain.id,
+        actorType: 'user',
+        actorId: 'user:jsj',
+      );
+      final manualApproved = matches.approve(
+        manual.id,
+        actorType: 'user',
+        actorId: 'user:jsj',
+      );
+      expect(manualApproved.matchMode, 'manual');
+    });
+
     test('match references survive a Git-only projection rebuild (gap 7)', () {
       final data = seed();
       final env = EnvironmentService(
@@ -315,6 +369,49 @@ void main() {
   });
 
   group('Cross-agent unified memory recall (requirement 3)', () {
+    test(
+      'knowledge authored with Task scope is recalled directly by Task id',
+      () {
+        final data = seed();
+        final recall = MemoryRecallService(workspace);
+        TaskRepository(workspace).create(
+          WorkTask(
+            id: 'TSK-scope',
+            domainId: data.domain.id,
+            milestoneId: data.milestone.id,
+            title: 'Scoped task',
+            status: TaskStatus.draft,
+            promptDraft: '',
+            promptMeta: '',
+            promptDraftRevision: 1,
+            promptMetaSourceRevision: 0,
+            approval: PromptApproval.missing,
+            autoDeriveTasks: false,
+            targetEnvironment: 'ENV-x',
+          ),
+        );
+        // A fact authored straight against a Task — no approved Match needed.
+        final taskScoped = entities.create(
+          kind: EntityKind.knowledge,
+          title: 'Task-local finding',
+          body: 'Only relevant to this task.',
+          domainId: data.domain.id,
+          taskId: 'TSK-scope',
+        );
+        final result = recall.recall(taskId: 'TSK-scope');
+        final entry = result.current
+            .where((k) => k.id == taskScoped.id)
+            .toList();
+        expect(
+          entry,
+          hasLength(1),
+          reason: 'Task-scoped memory is recallable without an approved Match',
+        );
+        // Recalled via its own Task scope, not by being linked through a match.
+        expect(entry.single.provenance, isNot(startsWith('match:')));
+      },
+    );
+
     test('recall spans agents, honours supersede, match and security', () {
       final data = seed();
       // Two different agents contribute Knowledge in the same milestone scope.

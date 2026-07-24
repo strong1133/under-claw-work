@@ -5,12 +5,13 @@
 ## 설치 · 초기화 · 첫 사용
 
 아래 명령은 macOS·Linux용 unsigned MVP artifact를 압축 해제한 디렉터리에서 실행한다.
-Claude Code와 Codex 중 이미 설치된 host만 자동 탐지해 연결하며 Agent 자체는
-설치하거나 변경하지 않는다. Hermes는 검증된 reviewer attestation 경계가 준비될
-때까지 기본 비활성화된 실험 기능이다.
+Hermes, Claude Code, Codex 중 이미 설치된 host를 자동 탐지해 스킬을 연결하며
+Agent 자체나 모델, 전역 페르소나는 설치하거나 변경하지 않는다. 스킬 사용과 자동
+Task runner 지원은 별도 경계다. Hermes에서도 스킬은 사용할 수 있지만 자동 runner는
+adapter acceptance를 통과하기 전까지 fail-closed다.
 
 ```bash
-# 1. Under Claw Work runtime과 4-skill bundle 설치
+# 1. Under Claw Work runtime과 5-skill bundle 설치
 ./packaging/install.sh
 
 # 2-A. 기존 로컬 Git 저장소를 작업 저장소로 초기화
@@ -38,7 +39,7 @@ Private 저장소 인증은 운영체제의 Git credential helper 또는 SSH Age
 특정 host만 명시적으로 연결해야 하는 격리 설치에서는 다음처럼 지정할 수 있다.
 
 ```bash
-UNDER_CLAW_HOSTS=codex ./packaging/install.sh
+UNDER_CLAW_HOSTS=hermes,codex ./packaging/install.sh
 ```
 
 제거:
@@ -56,7 +57,9 @@ UNDER_CLAW_HOSTS=codex ./packaging/install.sh
 
 ## 무엇인가
 
-Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모음**이다.
+Under Claw Work는 Agent를 대체하지 않는 **Agent 중립 작업환경·도구·스킬
+모음**이다. Hermes, Claude Code, Codex가 각자의 모델과 도구를 유지한 채 Task
+제어, Meta Prompt 승인, 실행 감사, 영구 기억을 사용한다.
 
 ```text
                          사용자가 지정한 Git 저장소
@@ -72,10 +75,9 @@ Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모
                          under-claw-work-plan
 ```
 
-- Hermes는 자동 연결하지 않는다. 실험용 skill 설치는
-  `UNDER_CLAW_EXPERIMENTAL_HERMES=1`로만 활성화하며 Task runner는 acceptance
-  통과 전 fail-closed 한다.
-- Hermes가 없어도 Claude Code 또는 Codex가 있으면 해당 Agent로 Task를 처리한다.
+- Hermes에는 검증된 스킬 bundle을 일반 host와 동일하게 연결한다. 단, Task runner는
+  acceptance 통과 전 fail-closed 한다.
+- 어느 한 host만 있어도 해당 Agent가 스킬과 관리 도구를 사용할 수 있다.
 - 여러 Agent가 있으면 Task의 실행 환경 정책에 따라 선택한다.
 - Agent가 하나도 없어도 Flutter와 CLI에서 업무 DB를 관리할 수 있다. AI Task
   실행만 `unavailable` 상태가 된다.
@@ -95,7 +97,7 @@ Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모
 
 | Host | 탐지 기준 | 설치 대상 |
 |---|---|---|
-| Hermes (실험) | 명시적 opt-in + `hermes` 또는 `${HERMES_HOME:-~/.hermes}` | `skills/` |
+| Hermes | `hermes` 명령 또는 `${HERMES_HOME:-~/.hermes}` | `skills/` |
 | Claude Code | `claude` 명령 또는 `${CLAUDE_HOME:-~/.claude}` | `skills/`, `commands/` |
 | Codex | `codex` 명령 또는 `${CODEX_HOME:-~/.codex}` | `skills/` |
 
@@ -103,7 +105,8 @@ Under Claw Work는 Agent가 아니라 **Agent 중립 작업환경 및 스킬 모
 
 ## Task 실행 스킬
 
-모든 Agent host는 `under-claw-work-plan`을 단일 진입점으로 사용한다.
+설명과 명령 선택은 `under-claw-work`, 실제 governed Task 실행은
+`under-claw-work-plan`을 진입점으로 사용한다.
 
 ```text
 under-claw-work-plan
@@ -115,12 +118,19 @@ under-claw-work-plan
 → Knowledge · Event · Audit 기록
 ```
 
-설치 bundle은 다음 네 스킬을 포함한다.
+설치 bundle은 다음 다섯 스킬을 포함한다.
 
+- `under-claw-work`
 - `under-claw-work-plan`
 - `under-claw-meta-prompt`
 - `under-claw-jarvis-plan-loop`
 - `under-claw-jarvis-plan`
+
+마지막 세 스킬은
+[`strong1133/under-claw-jarvis-plan`](https://github.com/strong1133/under-claw-jarvis-plan)의
+고정 revision과 checksum으로 패키징한다. Host별 프로젝트 지침과 opt-in 페르소나
+템플릿은 [`personas/`](personas/)에 있다. Installer는 기존 `AGENTS.md`,
+`CLAUDE.md`, `SOUL.md`를 덮어쓰지 않는다.
 
 ## Flutter 앱
 
@@ -195,7 +205,8 @@ lib/core/              공용 Core와 SQLite projection
 lib/main.dart          Flutter 데스크톱 앱
 bin/worklog.dart       headless CLI
 workdb/schemas/        정본 데이터 계약
-skills/                under-claw-work-plan과 bundle lock
+skills/                under-claw-work 안내·실행 스킬과 pinned bundle lock
+personas/              Host별 프로젝트 지침·전역 persona opt-in 템플릿
 packaging/             설치·제거와 ownership manifest
 docs/                  아키텍처와 보안 경계
 ```

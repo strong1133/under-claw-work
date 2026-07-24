@@ -42,7 +42,6 @@ class HostDiscoveryService {
       AgentHost.hermes,
       'hermes',
       _environment['HERMES_HOME'] ?? p.join(_userHome, '.hermes'),
-      enabled: _environment['UNDER_CLAW_EXPERIMENTAL_HERMES'] == '1',
     ),
     _status(
       AgentHost.claudeCode,
@@ -56,15 +55,9 @@ class HostDiscoveryService {
     ),
   ];
 
-  AgentHostStatus _status(
-    AgentHost host,
-    String executable,
-    String homePath, {
-    bool enabled = true,
-  }) {
+  AgentHostStatus _status(AgentHost host, String executable, String homePath) {
     final home = Directory(p.normalize(p.absolute(homePath)));
-    final detected =
-        enabled && (home.existsSync() || _executableExists(executable));
+    final detected = home.existsSync() || _executableExists(executable);
     return AgentHostStatus(
       host: host,
       home: home,

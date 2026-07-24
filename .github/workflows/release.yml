@@ -1,0 +1,73 @@
+name: Release
+
+# Builds the per-OS unsigned archives and publishes them to a GitHub Release so
+# the latest build is downloadable from GitHub — the binaries never enter the
+# git tree (invariant 1: only YAML/Markdown is canonical; binaries are derived).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish (e.g. v0.1.0-mvp)
+        required: true
+
+# GITHUB_TOKEN needs write access to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.41.9"
+          cache: true
+      - run: flutter pub get
+      # Publish only from green trees — mirror CI's gates before building.
+      - run: flutter analyze
+      - run: flutter test
+      - run: dart build cli -o build/cli
+      - if: runner.os == 'macOS'
+        run: flutter build macos
+      - if: runner.os == 'Windows'
+        run: flutter build windows
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+          flutter build linux
+      - name: Package unsigned archive
+        shell: bash
+        run: |
+          bash packaging/build-unsigned.sh \
+            --os "$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]')" \
+            --output build/distribution
+      - name: Packaging smoke test
+        shell: bash
+        run: |
+          release_dir="$(mktemp -d)"
+          tar -xzf "build/distribution/under-claw-work-$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]')-unsigned.tar.gz" -C "$release_dir"
+          bash tool/packaging_smoke.sh "$release_dir"/under-claw-work-*-unsigned
+      - name: Publish archive to the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.inputs.version || github.ref_name }}"
+          # First matrix job to reach here creates the release; the others race
+          # and no-op on "already exists". Unsigned builds are marked prerelease.
+          gh release create "$tag" \
+            --title "$tag" \
+            --prerelease \
+            --notes "Unsigned per-OS build. Read UNSIGNED-NOTICE.txt inside the archive: checksums detect corruption only, not publisher identity." \
+            || echo "Release $tag already exists; uploading asset."
+          # Each OS uploads its own distinct archive; --clobber makes re-runs idempotent.
+          gh release upload "$tag" build/distribution/under-claw-work-*-unsigned.tar.gz --clobber

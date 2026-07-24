@@ -21,7 +21,7 @@ cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
 release="$stage/under-claw-work-$os-unsigned"
 mkdir -p "$release/build/cli" "$release/packaging" "$release/skills" \
-  "$release/bundled-skills"
+  "$release/bundled-skills" "$release/personas"
 [[ -f "$root/build/cli/bundle/bin/worklog" ||
   -f "$root/build/cli/bundle/bin/worklog.exe" ]] || {
     echo "Missing precompiled CLI" >&2; exit 66;
@@ -32,8 +32,10 @@ cp -RL "$root/build/cli/bundle" "$release/build/cli/bundle"
 cp "$root/packaging/install.sh" "$root/packaging/update.sh" \
   "$root/packaging/uninstall.sh" "$root/packaging/verify-release.sh" \
   "$release/packaging/"
-cp -RL "$root/skills/under-claw-work-plan" "$release/skills/"
+cp -RL "$root/skills/under-claw-work-plan" "$root/skills/under-claw-work" \
+  "$release/skills/"
 cp "$root/skills/bundle.lock.yaml" "$release/skills/"
+cp -RL "$root/personas/." "$release/personas/"
 
 case "$os" in
   macos)

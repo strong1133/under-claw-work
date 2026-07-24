@@ -1,0 +1,4 @@
+interface:
+  display_name: "Under Claw Work"
+  short_description: "작업 제어·메타 프롬프트·기억 기능 안내"
+  default_prompt: "Use $under-claw-work to explain the workspace capabilities and route this request."

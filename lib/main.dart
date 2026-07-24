@@ -323,6 +323,29 @@ class _NotionControllerAdapter implements NotionUiController {
             ? _state.value.conflicts
             : _replaceConflict(_state.value.conflicts, conflict),
       );
+    } on NotionReconcileConflict catch (error) {
+      // Inbound authoritative-field edit: show it in the conflict screen when it
+      // carries a snapshot; otherwise it is a structural error.
+      final snapshot =
+          error.snapshot ?? coordinator.conflict(error.canonicalId);
+      if (snapshot == null) {
+        _state.value = NotionSyncViewState(
+          status: NotionConnectionStatus.error,
+          message: '$error',
+        );
+        rethrow;
+      }
+      _state.value = NotionSyncViewState(
+        status: NotionConnectionStatus.error,
+        message: 'A Notion conflict requires review.',
+        lastSyncedAt: _state.value.lastSyncedAt,
+        pushed: _state.value.pushed,
+        pulled: _state.value.pulled,
+        conflicts: _replaceConflict(
+          _state.value.conflicts,
+          _toConflictView(snapshot),
+        ),
+      );
     } on Object catch (error) {
       _state.value = NotionSyncViewState(
         status: NotionConnectionStatus.error,
@@ -527,6 +550,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final body = TextEditingController();
     final domainId = TextEditingController();
     final milestoneId = TextEditingController();
+    final taskId = TextEditingController();
+    // Task-level scope is only meaningful for memory entities (Knowledge /
+    // Reference); it lets a fact be authored straight against a Task so
+    // cross-agent recall by Task id works without an approved Match.
+    final showTaskScope =
+        _viewKind == EntityKind.knowledge || _viewKind == EntityKind.reference;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -550,6 +579,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                   controller: milestoneId,
                   decoration: const InputDecoration(
                     labelText: 'Milestone ID (optional)',
+                  ),
+                ),
+              if (showTaskScope)
+                TextField(
+                  controller: taskId,
+                  decoration: const InputDecoration(
+                    labelText: 'Task ID (optional — scopes memory to a Task)',
                   ),
                 ),
               TextField(
@@ -585,6 +621,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         milestoneId: milestoneId.text.trim().isEmpty
             ? null
             : milestoneId.text.trim(),
+        taskId: taskId.text.trim().isEmpty ? null : taskId.text.trim(),
       );
       _projection!.rebuild();
       setState(() {

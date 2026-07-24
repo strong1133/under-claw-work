@@ -101,7 +101,7 @@ preflight_skill_tree() {
   local host_home="$1"
   local skill_root="$host_home/skills"
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
-    under-claw-jarvis-plan under-claw-work-plan; do
+    under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     local target="$skill_root/$skill"
     if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
       echo "Refusing to overwrite non-owned skill: $target" >&2
@@ -112,14 +112,13 @@ preflight_skill_tree() {
 hermes_home="${HERMES_HOME:-$HOME/.hermes}"
 claude_home="${CLAUDE_HOME:-$HOME/.claude}"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
-if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
-  host_detected hermes hermes "$hermes_home"; then
+if host_detected hermes hermes "$hermes_home"; then
   preflight_skill_tree "$hermes_home"
 fi
 if host_detected claude-code claude "$claude_home"; then
   preflight_skill_tree "$claude_home"
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
-    under-claw-jarvis-plan under-claw-work-plan; do
+    under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     command_target="$claude_home/commands/$skill.md"
     if [[ -e "$command_target" &&
       ! -f "$command_target.under-claw-work-owned" ]]; then
@@ -154,7 +153,7 @@ if [[ -d "$product_root/build/cli/bundle/lib" ]]; then
   cp -R "$product_root/build/cli/bundle/lib" "$candidate/lib"
 fi
 if [[ "$packaged" == "1" ]]; then
-  for directory in app packaging bundled-skills skills; do
+  for directory in app packaging bundled-skills skills personas; do
     rm -rf "$candidate/$directory"
     cp -RL "$product_root/$directory" "$candidate/$directory"
   done
@@ -188,7 +187,8 @@ install_skill_tree() {
   mkdir -p "$skill_root"
   echo "host_root	$host	$host_home" >> "$manifest"
 
-  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan under-claw-work-plan; do
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
+    under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     local target="$skill_root/$skill"
     if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
       echo "Refusing to overwrite non-owned skill: $target" >&2
@@ -207,6 +207,12 @@ install_skill_tree() {
   local target="$skill_root/under-claw-work-plan"
   rm -rf "$target"
   cp -R "$product_root/skills/under-claw-work-plan" "$target"
+  touch "$target/.under-claw-work-owned"
+  echo "owned_skill	$host	$target	$(tree_checksum "$target")" >> "$manifest"
+
+  target="$skill_root/under-claw-work"
+  rm -rf "$target"
+  cp -R "$product_root/skills/under-claw-work" "$target"
   touch "$target/.under-claw-work-owned"
   echo "owned_skill	$host	$target	$(tree_checksum "$target")" >> "$manifest"
 }
@@ -235,6 +241,15 @@ install_claude_commands() {
   cp "$product_root/skills/under-claw-work-plan/SKILL.md" "$target"
   touch "$target.under-claw-work-owned"
   echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
+
+  target="$command_root/under-claw-work.md"
+  if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+    echo "Refusing to overwrite non-owned command: $target" >&2
+    return 73
+  fi
+  cp "$product_root/skills/under-claw-work/SKILL.md" "$target"
+  touch "$target.under-claw-work-owned"
+  echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
 }
 
 host_snapshot="$staging/host-snapshot"
@@ -255,12 +270,11 @@ snapshot_target() {
 snapshot_skill_tree() {
   local host_home="$1"
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
-    under-claw-jarvis-plan under-claw-work-plan; do
+    under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     snapshot_target "$host_home/skills/$skill"
   done
 }
-if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
-  host_detected hermes hermes "$hermes_home"; then
+if host_detected hermes hermes "$hermes_home"; then
   snapshot_skill_tree "$hermes_home"
 fi
 if host_detected claude-code claude "$claude_home"; then
@@ -270,6 +284,9 @@ if host_detected claude-code claude "$claude_home"; then
     snapshot_target "$claude_home/commands/$skill.md"
     snapshot_target "$claude_home/commands/$skill.md.under-claw-work-owned"
   done
+  snapshot_target "$claude_home/commands/under-claw-work.md"
+  snapshot_target \
+    "$claude_home/commands/under-claw-work.md.under-claw-work-owned"
 fi
 if host_detected codex codex "$codex_home"; then
   snapshot_skill_tree "$codex_home"
@@ -311,8 +328,7 @@ candidate=""
 trap rollback_install_and_hosts ERR
 
 connected=0
-if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
-  host_detected hermes hermes "$hermes_home"; then
+if host_detected hermes hermes "$hermes_home"; then
   install_skill_tree hermes "$hermes_home"
   connected=$((connected + 1))
 fi

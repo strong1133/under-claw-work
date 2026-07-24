@@ -6,6 +6,7 @@ import 'package:under_claw_work/core/canonical_repository.dart';
 import 'package:under_claw_work/core/entity_service.dart';
 import 'package:under_claw_work/core/environment_service.dart';
 import 'package:under_claw_work/core/notion_secret_store.dart';
+import 'package:under_claw_work/core/match_service.dart';
 import 'package:under_claw_work/core/notion_sync_adapter.dart';
 import 'package:under_claw_work/core/notion_sync_coordinator.dart';
 import 'package:under_claw_work/core/workspace.dart';
@@ -291,4 +292,69 @@ void main() {
       expect(coordinator.conflict(environment.id), isNotNull);
     },
   );
+
+  test('inbound Match review_state edit surfaces as a reviewable conflict, '
+      'never a blind overwrite', () async {
+    const matchConfig = NotionLocalConfig(
+      enabled: true,
+      secretRef: ref,
+      databases: {'match': 'db-match'},
+    );
+    configStore.save(matchConfig);
+    final entities = EntityService(workspace);
+    final domain = entities.create(kind: EntityKind.domain, title: 'Product');
+    final milestone = entities.create(
+      kind: EntityKind.milestone,
+      title: 'MVP',
+      domainId: domain.id,
+    );
+    final knowledge = entities.create(
+      kind: EntityKind.knowledge,
+      title: 'Fact',
+      domainId: domain.id,
+      milestoneId: milestone.id,
+    );
+    final match = MatchService(workspace).propose(
+      subjectId: knowledge.id,
+      targetId: milestone.id,
+      actorType: 'user',
+      actorId: 'user:jsj',
+    );
+    var commits = 0;
+    final coordinator = NotionSyncCoordinator(
+      workspace: workspace,
+      client: client,
+      secretStore: secrets,
+      configStore: configStore,
+      commitCanonical: () async => 'commit-${++commits}',
+    );
+    addTearDown(coordinator.dispose);
+
+    await coordinator.pushCanonical();
+    final page = (await client.pageByCanonicalId(token, match.id))!;
+    // A human flips the review state directly in Notion.
+    client.simulateRemoteEdit(page.pageId, {
+      ...page.properties,
+      'review_state': 'approved',
+    });
+
+    // The inbound edit is a reviewable conflict, not a silent overwrite.
+    await expectLater(
+      coordinator.pullAndCommit(),
+      throwsA(isA<NotionReconcileConflict>()),
+    );
+    expect(commits, 0, reason: 'no Git write on a refused authoritative edit');
+    final conflict = coordinator.conflict(match.id)!;
+    expect(conflict.type, 'match');
+    expect(conflict.gitProperties['review_state'], 'proposed');
+    expect(conflict.notionProperties['review_state'], 'approved');
+    // Git canonical review state was NOT overwritten.
+    expect(MatchService(workspace).get(match.id)!.reviewState, 'proposed');
+
+    // Keep Git re-mirrors the authoritative value back onto the Notion page.
+    await coordinator.resolveKeepGit(match.id);
+    final resolved = (await client.pageByCanonicalId(token, match.id))!;
+    expect(resolved.properties['review_state'], 'proposed');
+    expect(coordinator.conflict(match.id), isNull);
+  });
 }

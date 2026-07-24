@@ -1020,9 +1020,18 @@ class NotionEntityMapper {
 /// without silently overwriting authoritative state. Conflicts are always
 /// explicit — the reconciler never blind-writes an authoritative field.
 class NotionReconcileConflict implements Exception {
-  const NotionReconcileConflict(this.canonicalId, this.reason);
+  const NotionReconcileConflict(this.canonicalId, this.reason, [this.snapshot]);
   final String canonicalId;
   final String reason;
+
+  /// Present when the conflict is a reviewable concurrent-edit on an
+  /// authoritative field (e.g. a Match review_state edited in Notion). The
+  /// coordinator surfaces it in the conflict screen instead of a plain error so
+  /// the user resolves it (Keep Git / Apply Notion) rather than just seeing it
+  /// fail. Absent for structural conflicts (missing entity, unknown type),
+  /// which are genuine errors, not concurrent edits.
+  final NotionConflictSnapshot? snapshot;
+
   @override
   String toString() => 'NotionReconcileConflict($canonicalId): $reason';
 }
@@ -1209,10 +1218,28 @@ class NotionCanonicalReconciler {
     if (incomingState is String &&
         incomingState.isNotEmpty &&
         incomingState != match.reviewState) {
+      // A reviewable concurrent edit, not a structural error: carry a snapshot
+      // so the conflict screen shows Git's authoritative review_state beside the
+      // Notion edit. The screen keeps `review_state` non-appliable, so the only
+      // safe resolution is Keep Git (re-mirror Git's value back to the page).
+      final gitProperties = const NotionEntityMapper()
+          .fromCanonical(match.entity)
+          .properties;
       throw NotionReconcileConflict(
         change.canonicalId,
         'review_state is authoritative in Git; refusing to overwrite '
         '${match.reviewState} with "$incomingState" from Notion',
+        NotionConflictSnapshot(
+          canonicalId: change.canonicalId,
+          type: 'match',
+          pageId: change.pageId,
+          baseRevision: '',
+          remoteRevision: change.remoteRevision,
+          gitProperties: gitProperties,
+          notionProperties: change.properties,
+          gitArchived: false,
+          archived: change.archived,
+        ),
       );
     }
     // Subject/target/relations are mirrored read-only; nothing to write.

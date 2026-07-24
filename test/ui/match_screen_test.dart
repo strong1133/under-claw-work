@@ -122,6 +122,54 @@ void main() {
     expect(agentMatches.any((m) => m.targetId == domain.id), isTrue);
   });
 
+  testWidgets('manual and agent matches coexist with reviewable provenance', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New match'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Propose'));
+    await tester.pumpAndSettle();
+
+    final entities = EntityService(Workspace(root));
+    final domain = entities.create(
+      kind: EntityKind.domain,
+      title: 'Ledger reconciliation',
+    );
+    entities.create(
+      kind: EntityKind.knowledge,
+      title: 'Ledger reconciliation guide',
+      body: 'Shared-term fixture for deterministic matching.',
+      domainId: domain.id,
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Auto-match'));
+    await tester.pumpAndSettle();
+
+    final reloaded = MatchService(Workspace(root)).list();
+    final manual = reloaded.singleWhere(
+      (match) =>
+          match.matchMode == 'manual' &&
+          match.id != 'MAT-review' &&
+          match.actorId == 'user:operator',
+    );
+    final agent = reloaded.singleWhere(
+      (match) =>
+          match.matchMode == 'agent' &&
+          match.targetId == domain.id &&
+          match.actorId == 'agent:auto-match',
+    );
+
+    expect(manual.id, isNot(agent.id));
+    expect(manual.reviewState, 'proposed');
+    expect(agent.reviewState, 'proposed');
+    expect(manual.history, isNotEmpty);
+    expect(agent.history, isNotEmpty);
+    expect(agent.evidence.toLowerCase(), contains('ledger'));
+    expect(agent.confidence, isNotNull);
+  });
+
   testWidgets('Match review screen matches golden', (tester) async {
     await pump(tester);
     await tester.tap(find.text('KNW-fact → MLS-mgmt').first);

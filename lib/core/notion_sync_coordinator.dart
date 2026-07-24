@@ -155,6 +155,24 @@ class NotionSyncCoordinator {
         NotionSyncStatus(NotionSyncPhase.conflict, message: '$error'),
       );
       rethrow;
+    } on NotionReconcileConflict catch (error) {
+      // An inbound authoritative-field edit (e.g. a Match review_state changed
+      // in Notion). When it carries a snapshot it is a reviewable concurrent
+      // edit: surface it in the conflict screen exactly like a push conflict,
+      // never as a blind overwrite. Snapshot-less reconcile conflicts are
+      // structural errors (missing entity/unknown type) and stay `failed`.
+      final snapshot = error.snapshot;
+      if (snapshot != null) {
+        _conflicts[snapshot.canonicalId] = snapshot;
+        _statuses.add(
+          NotionSyncStatus(NotionSyncPhase.conflict, message: '$error'),
+        );
+      } else {
+        _statuses.add(
+          NotionSyncStatus(NotionSyncPhase.failed, message: '$error'),
+        );
+      }
+      rethrow;
     } on Object catch (error) {
       _statuses.add(
         NotionSyncStatus(NotionSyncPhase.failed, message: '$error'),

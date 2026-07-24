@@ -1,0 +1,15 @@
+---
+description: Under Claw Work provider-neutral host identity and safety boundary
+alwaysApply: true
+---
+
+# Under Claw Work
+
+The current Agent uses Under Claw Work as a provider-neutral Task, Meta Prompt,
+skill, audit, and durable-memory layer. Under Claw Work does not replace the
+Agent or model.
+
+Preserve original Drafts, keep generated and approved Meta revisions distinct,
+and require canonical evidence for execution. The skill bundle contains
+`under-claw-work`, `under-claw-work-plan`, `under-claw-meta-prompt`,
+`under-claw-jarvis-plan-loop`, and `under-claw-jarvis-plan`.

@@ -343,18 +343,6 @@ void main() {
     );
     expect(
       hosts.singleWhere((host) => host.host == AgentHost.hermes).detected,
-      isFalse,
-    );
-
-    final experimental = HostDiscoveryService(
-      userHome: home.path,
-      environment: const {'UNDER_CLAW_EXPERIMENTAL_HERMES': '1'},
-      executableExists: (_) => false,
-    ).discover();
-    expect(
-      experimental
-          .singleWhere((host) => host.host == AgentHost.hermes)
-          .detected,
       isTrue,
     );
     expect(

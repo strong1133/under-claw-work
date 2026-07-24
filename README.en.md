@@ -5,12 +5,14 @@
 ## Install, initialize, and run
 
 Run these commands from an extracted unsigned MVP artifact on macOS or Linux.
-The installer connects only existing Claude Code or Codex hosts. It never
-installs or replaces an Agent. Hermes is disabled by default until a trusted
-reviewer-attestation boundary passes acceptance.
+The installer connects existing Hermes, Claude Code, and Codex hosts to the
+skill bundle. It never installs or replaces an Agent, model, or global persona.
+Skill use and automated Task-runner support are separate boundaries. Hermes can
+use the skills while its automated runner remains fail-closed until adapter
+acceptance passes.
 
 ```bash
-# 1. Install the Under Claw Work runtime and four-skill bundle
+# 1. Install the Under Claw Work runtime and five-skill bundle
 ./packaging/install.sh
 
 # 2-A. Initialize an existing local Git repository
@@ -39,7 +41,7 @@ configuration files.
 To connect only selected hosts in an isolated installation:
 
 ```bash
-UNDER_CLAW_HOSTS=codex ./packaging/install.sh
+UNDER_CLAW_HOSTS=hermes,codex ./packaging/install.sh
 ```
 
 Uninstall:
@@ -58,8 +60,9 @@ installations are preserved.
 
 ## What it is
 
-Under Claw Work is not an Agent. It is a **provider-neutral work environment
-and skill bundle**.
+Under Claw Work does not replace an Agent. It is a **provider-neutral work
+environment, tool, and skill bundle** used by Hermes, Claude Code, Codex, and
+compatible hosts.
 
 ```text
                        User-selected Git repository
@@ -75,10 +78,9 @@ and skill bundle**.
                          under-claw-work-plan
 ```
 
-- Hermes is not connected automatically. Setting
-  `UNDER_CLAW_EXPERIMENTAL_HERMES=1` installs experimental skills only; its
-  Task runner remains fail-closed until acceptance.
-- Without Hermes, Claude Code or Codex can process Tasks.
+- Hermes receives the verified skill bundle like other hosts. Its automated
+  Task runner still fails closed until acceptance passes.
+- Any available host can use the skills and management tools.
 - If several hosts are present, Task execution policy selects the environment.
 - With no Agent installed, Flutter and CLI management remain available; only
   AI Task execution is unavailable.
@@ -93,7 +95,7 @@ The installer uses these host boundaries:
 
 | Host | Detection | Installed integration |
 |---|---|---|
-| Hermes (experimental) | explicit opt-in plus `hermes` or `${HERMES_HOME:-~/.hermes}` | `skills/` |
+| Hermes | `hermes` or `${HERMES_HOME:-~/.hermes}` | `skills/` |
 | Claude Code | `claude` or `${CLAUDE_HOME:-~/.claude}` | `skills/`, `commands/` |
 | Codex | `codex` or `${CODEX_HOME:-~/.codex}` | `skills/` |
 
@@ -102,7 +104,8 @@ overwritten.
 
 ## Task skill pipeline
 
-Every Agent host uses `under-claw-work-plan` as the single entry point:
+Use `under-claw-work` for capability discovery and routing, and
+`under-claw-work-plan` as the governed Task execution entry point:
 
 ```text
 under-claw-work-plan
@@ -114,7 +117,19 @@ under-claw-work-plan
 → Knowledge · Event · Audit
 ```
 
-The bundle contains all four named skills.
+The bundle contains five skills:
+
+- `under-claw-work`
+- `under-claw-work-plan`
+- `under-claw-meta-prompt`
+- `under-claw-jarvis-plan-loop`
+- `under-claw-jarvis-plan`
+
+The last three are packaged from the pinned and checksum-verified
+[`strong1133/under-claw-jarvis-plan`](https://github.com/strong1133/under-claw-jarvis-plan)
+revision. Native host context and opt-in persona templates live in
+[`personas/`](personas/). The installer never overwrites an existing
+`AGENTS.md`, `CLAUDE.md`, or `SOUL.md`.
 
 ## Flutter
 
@@ -175,7 +190,8 @@ lib/core/              shared Core and SQLite projection
 lib/main.dart          Flutter desktop app
 bin/worklog.dart       headless CLI
 workdb/schemas/        canonical data contracts
-skills/                orchestration skill and bundle lock
+skills/                Under Claw Work guide/runner skills and pinned bundle lock
+personas/              native host context and opt-in persona templates
 packaging/             installer, uninstaller, ownership manifest
 docs/                  architecture and security boundaries
 ```

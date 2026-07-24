@@ -34,7 +34,7 @@ install -m 0755 "$cli_source" "$candidate/bin/$cli_name"
 rm -rf "$candidate/lib"
 [[ ! -d "$release/build/cli/bundle/lib" ]] ||
   cp -R "$release/build/cli/bundle/lib" "$candidate/lib"
-for directory in app packaging bundled-skills skills; do
+for directory in app packaging bundled-skills skills personas; do
   rm -rf "$candidate/$directory"
   cp -RL "$release/$directory" "$candidate/$directory"
 done

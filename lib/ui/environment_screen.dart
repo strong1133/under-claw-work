@@ -278,7 +278,7 @@ class _EnvironmentList extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(record.id, style: AppTypography.mono(size: 12)),
+          subtitle: Text(record.id, style: AppTypography.mono()),
           trailing: StatusPill(kind: kind, label: record.status),
           onTap: () => onSelected(record.id),
         );
@@ -364,7 +364,7 @@ class _EnvironmentDetailState extends State<_EnvironmentDetail> {
           ],
         ),
         const SizedBox(height: AppTokens.spaceXs),
-        SelectableText(record.id, style: AppTypography.mono(size: 13)),
+        SelectableText(record.id, style: AppTypography.mono()),
         const SizedBox(height: AppTokens.spaceXl),
 
         _Field(
@@ -435,7 +435,7 @@ class _EnvironmentDetailState extends State<_EnvironmentDetail> {
             children: [
               SelectableText(
                 'machine_key: ${record.machineKey}',
-                style: AppTypography.mono(size: 13),
+                style: AppTypography.mono(),
               ),
               Text(
                 '${record.os} · ${record.architecture}',

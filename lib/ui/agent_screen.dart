@@ -304,7 +304,7 @@ class _AgentList extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(record.id, style: AppTypography.mono(size: 12)),
+          subtitle: Text(record.id, style: AppTypography.mono()),
           trailing: StatusPill(kind: kind, label: record.status),
           onTap: () => onSelected(record.id),
         );
@@ -377,7 +377,7 @@ class _AgentDetailState extends State<_AgentDetail> {
           ],
         ),
         const SizedBox(height: AppTokens.spaceXs),
-        SelectableText(record.id, style: AppTypography.mono(size: 13)),
+        SelectableText(record.id, style: AppTypography.mono()),
         const SizedBox(height: AppTokens.spaceXl),
         _Field(
           label: 'Name (editable display name — never an identity key)',

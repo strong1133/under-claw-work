@@ -39,11 +39,17 @@ Current Hermes upstream exposes skills at
 and deterministic loading with
 `hermes chat -s under-claw-work-plan -q "<request>"`. Under Claw Work does not
 modify Hermes Core and does not use a project plugin for the MVP. The four
-skills remain independent; the orchestration skill records actual nested
+execution skills remain independent; the orchestration skill records actual nested
 invocation evidence in the Git canonical workspace.
 
-This is a verified upstream/process contract. Live remote E2E remains
-separately gated and is never inferred from a fixture.
+The provider-neutral bundle contains the local `under-claw-work` capability
+guide, the local `under-claw-work-plan` governed entry point, and the pinned
+upstream `under-claw-meta-prompt`, `under-claw-jarvis-plan-loop`, and
+`under-claw-jarvis-plan` skills.
+
+Skill installation is supported for Hermes without changing Hermes Core.
+Automated Hermes Task execution is a separate adapter boundary: live remote E2E
+and reviewer attestation remain gated and are never inferred from a fixture.
 
 ## Current boundary
 

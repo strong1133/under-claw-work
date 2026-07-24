@@ -251,7 +251,7 @@ class _KnowledgeTile extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppTokens.spaceXs),
-            Text(item.id, style: AppTypography.mono(size: 12)),
+            Text(item.id, style: AppTypography.mono()),
             const SizedBox(height: AppTokens.spaceSm),
             Wrap(
               spacing: AppTokens.spaceSm,

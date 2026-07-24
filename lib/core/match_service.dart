@@ -386,10 +386,21 @@ class MatchService {
         'Cannot $action a match in state ${current.reviewState}.',
       );
     }
+    // A user approving an agent-proposed match makes the provenance genuinely
+    // collaborative: the agent proposed the link and a human confirmed it. Record
+    // that as `hybrid` so "both user and agent" is a first-class, visible
+    // provenance (requirement 2's 둘다) rather than an implicit two-step workflow.
+    // Evidence carried over from the agent proposal keeps the hybrid match
+    // explainable, satisfying the same agent/hybrid evidence contract as propose.
+    final promotesToHybrid =
+        action == 'approve' &&
+        actorType == 'user' &&
+        current.matchMode == 'agent';
     final now = DateTime.now().toUtc().toIso8601String();
     final data = <String, Object?>{
       ...current.data,
       'review_state': state,
+      if (promotesToHybrid) 'match_mode': 'hybrid',
       'history': [
         ...current.history,
         {

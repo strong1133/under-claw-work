@@ -354,11 +354,11 @@ class _MatchList extends StatelessWidget {
             '${record.subjectId} → ${record.targetId}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTypography.mono(size: 13),
+            style: AppTypography.mono(),
           ),
           subtitle: Text(
             '${record.matchMode} · ${record.id}',
-            style: AppTypography.mono(size: 12),
+            style: AppTypography.mono(),
           ),
           trailing: StatusPill(kind: kind, label: record.reviewState),
           onTap: () => onSelected(record.id),
@@ -402,14 +402,14 @@ class _MatchDetail extends StatelessWidget {
             Expanded(
               child: Text(
                 '${record.subjectId} → ${record.targetId}',
-                style: AppTypography.mono(size: AppTypography.sizeTitle),
+                style: AppTypography.mono(),
               ),
             ),
             StatusPill(kind: kind, label: record.reviewState),
           ],
         ),
         const SizedBox(height: AppTokens.spaceXs),
-        SelectableText(record.id, style: AppTypography.mono(size: 13)),
+        SelectableText(record.id, style: AppTypography.mono()),
         const SizedBox(height: AppTokens.spaceXl),
         Wrap(
           spacing: AppTokens.spaceSm,
@@ -490,7 +490,7 @@ class _HistoryTile extends StatelessWidget {
                 Text(
                   '${entry['action']} · ${entry['actor_type']}:${entry['actor_id']}',
                 ),
-                Text('${entry['at']}', style: AppTypography.mono(size: 12)),
+                Text('${entry['at']}', style: AppTypography.mono()),
                 if (entry['reason'] != null) Text('reason: ${entry['reason']}'),
               ],
             ),

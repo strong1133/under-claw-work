@@ -284,6 +284,8 @@ AI 검색과 context pack에 최적화된 원자적 내용
 
 Domain·Milestone의 사전 지식도 같은 Knowledge 엔티티를 사용한다. Task 실행 중 생성된 기억과 구별할 필요가 있으면 `origin`을 사용한다.
 
+`scope`는 Domain·Milestone뿐 아니라 `scope.task_ids`로 특정 Task에 직접 부여할 수 있다. 이렇게 authoring된 Knowledge는 승인된 Match 없이도 Task id 회상으로 바로 조회된다(요구3의 Domain·Milestone·Task 3단 scope). `scope.task_ids`는 존재하는 Task를 참조해야 하며 참조 무결성으로 검증된다.
+
 ```yaml
 origin:
   kind: user_authored
@@ -297,6 +299,15 @@ origin:
 - `reference_extracted`
 - `task_result`
 - `imported`
+
+교차-agent 통합기억 회상의 보안필터를 위해 선택적 `visibility` 필드를 둔다.
+
+```yaml
+visibility: normal   # normal | restricted | secret
+```
+
+- 값이 없으면 `normal`로 간주하고 일반 회상 대상이다.
+- `restricted`·`secret` Knowledge는 검증된 restricted-scope capability를 제시한 호출자에게만 회상되며, 그렇지 않으면 fail-closed로 제외한다(요구3 보안필터). 규칙은 `MemoryRecallService`를 normative source로 한다.
 
 ## Reference
 
@@ -670,6 +681,7 @@ updated_at: ...
 
 - 매칭 제안(`propose`)·승인(`approve`)·거부(`reject`)·해제(`revoke`)의 상태 전이는 `history`에 append-only로 남기고, 매 전이마다 immutable `match_reviewed` Event를 추가한다.
 - Agent 자동매칭은 `match_mode: agent`와 설명가능한 `confidence`·`evidence`를 제시하며, 정책 임계값(`autoApproveThreshold`) 이상일 때만 자동 확정하고 그 외에는 사람이 승인한다.
+- 사용자가 agent 제안(`match_mode: agent`)을 `approve`하면 사람과 agent가 함께 만든 매칭이므로 `match_mode`를 `hybrid`로 승격한다. 이때 agent 제안의 `evidence`를 그대로 보존해 hybrid 매칭도 설명가능성을 유지한다. 이것이 요구2의 "사용자·agent·둘 다" 중 "둘 다" 경로를 데이터에 남는 1급 provenance로 만든다.
 - 오매칭 해제·교정은 `revoke`로 처리하고 이력을 보존한다(삭제 아님).
 - 참조는 정본 관계 필드로 검증되어 Git 정본만으로 projection을 재생성해도 유지된다.
 

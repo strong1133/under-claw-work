@@ -37,6 +37,7 @@ class EntityService {
     String body = '',
     String? domainId,
     String? milestoneId,
+    String? taskId,
     String status = 'active',
     String priority = 'normal',
     List<String> objectiveIds = const [],
@@ -61,6 +62,14 @@ class EntityService {
     final scope = <String, Object?>{};
     if (domainId != null) scope['domain_id'] = domainId;
     if (milestoneId != null) scope['milestone_id'] = milestoneId;
+    // Task-level scope only applies to memory entities (Knowledge/Reference):
+    // it lets a fact be authored directly against a Task so cross-agent recall
+    // by Task id works without needing an approved Match (requirement 3's
+    // Domain/Milestone/Task scoping). Milestones/objectives never carry it.
+    if (taskId != null &&
+        (kind == EntityKind.knowledge || kind == EntityKind.reference)) {
+      scope['task_ids'] = [taskId];
+    }
     final data = <String, Object?>{
       'schema_version': 1,
       'id': id,

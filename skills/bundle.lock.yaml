@@ -1,9 +1,10 @@
 schema_version: 1
-bundle_version: 0.1.0-mvp
+bundle_version: 0.2.0-mvp
 upstream:
   repository: https://github.com/strong1133/under-claw-jarvis-plan.git
   revision: ab3e169f26aea433e4d25709e42a05e74324700b
 skills:
+  under-claw-work: {source: local}
   under-claw-work-plan: {source: local}
   under-claw-meta-prompt:
     source: upstream

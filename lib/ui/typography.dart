@@ -87,14 +87,18 @@ class AppTypography {
 
   /// Monospace style for code/terminal/id surfaces, resolving D2Coding with a
   /// safe fallback chain.
-  static TextStyle mono({Color? color, double? size, FontWeight? weight}) =>
-      TextStyle(
-        fontFamily: 'D2Coding',
-        fontFamilyFallback: monospaceFallback,
-        fontSize: sizeBody,
-        height: 1.4,
-        letterSpacing: 0,
-        color: color,
-        fontWeight: weight,
-      );
+  ///
+  /// There is deliberately no `size` parameter: requirement 4 unifies every
+  /// text surface on 16pt, so this style is always [sizeBody]. Hierarchy comes
+  /// from [color] and [weight] only. Keeping the size off the API means the code
+  /// cannot even express a sub-16pt intent.
+  static TextStyle mono({Color? color, FontWeight? weight}) => TextStyle(
+    fontFamily: 'D2Coding',
+    fontFamilyFallback: monospaceFallback,
+    fontSize: sizeBody,
+    height: 1.4,
+    letterSpacing: 0,
+    color: color,
+    fontWeight: weight,
+  );
 }
