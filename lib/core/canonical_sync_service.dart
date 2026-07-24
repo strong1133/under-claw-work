@@ -239,7 +239,8 @@ class CanonicalSyncService {
   }
 
   Future<void> _requireCanonicalOnlyWorktree() async {
-    final status = await _output(['status', '--porcelain=v1', '-z']);
+    final result = await _checked(['status', '--porcelain=v1', '-z']);
+    final status = result.stdout.toString();
     for (final entry
         in status.split('\u0000').where((value) => value.isNotEmpty)) {
       // Porcelain v1 is `XY path`; rename/copy records contain a second NUL

@@ -50,6 +50,22 @@ void main() {
     );
   });
 
+  test('publishes a tracked canonical file modified in the worktree', () async {
+    final domain = CanonicalRepository(
+      workspace,
+    ).list(EntityKind.domain).single;
+    EntityService(workspace).update(domain, title: 'Updated');
+
+    final report = await CanonicalSyncService(workspace).syncCanonical(
+      message: 'sync tracked update',
+      verifier: _RecordingVerifier(),
+    );
+
+    expect(report.committed, isTrue);
+    expect(report.pushed, isTrue);
+    expect(await _output(local.path, ['status', '--porcelain']), isEmpty);
+  });
+
   test('rejects a pre-existing staged index without changing it', () async {
     final note = File(p.join(local.path, 'note.txt'))
       ..writeAsStringSync('note');
