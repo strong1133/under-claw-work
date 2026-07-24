@@ -37,9 +37,11 @@ class ReleaseUpdateService {
         !candidateVersionFile.existsSync()) {
       throw StateError('Release or trusted installed verifier is incomplete.');
     }
+    final verifierPath = await _bashPath(verifier.path);
+    final releasePath = await _bashPath(release.path);
     final verified = await Process.run('bash', [
-      _bashPath(verifier.path),
-      _bashPath(release.path),
+      verifierPath,
+      releasePath,
     ], runInShell: false);
     if (verified.exitCode != 0) {
       throw StateError('Release manifest verification failed.');
@@ -67,12 +69,18 @@ class ReleaseUpdateService {
     if (!helper.existsSync()) {
       throw StateError('Installed update helper is unavailable: $name');
     }
+    final helperPath = await _bashPath(helper.path);
+    final bashArguments = <String>[];
+    for (final argument in arguments) {
+      bashArguments.add(await _bashPath(argument));
+    }
+    final bashInstallRoot = await _bashPath(installRoot.path);
     final result = await Process.run(
       'bash',
-      [_bashPath(helper.path), ...arguments.map(_bashPath)],
+      [helperPath, ...bashArguments],
       environment: {
         ...Platform.environment,
-        'UNDER_CLAW_WORK_HOME': _bashPath(installRoot.path),
+        'UNDER_CLAW_WORK_HOME': bashInstallRoot,
       },
       runInShell: false,
     );
@@ -84,14 +92,19 @@ class ReleaseUpdateService {
     return result.stdout.toString().trim();
   }
 
-  String _bashPath(String value) {
+  Future<String> _bashPath(String value) async {
     if (!Platform.isWindows) return value;
-    final normalized = value.replaceAll(r'\', '/');
-    final drivePath = RegExp(r'^([A-Za-z]):/(.*)$').firstMatch(normalized);
-    if (drivePath != null) {
-      return '/${drivePath.group(1)!.toLowerCase()}/${drivePath.group(2)!}';
+    final converted = await Process.run('bash', [
+      '-lc',
+      r'cygpath -a -u -- "$1"',
+      'under-claw-cygpath',
+      value,
+    ], runInShell: false);
+    final output = converted.stdout.toString().trim();
+    if (converted.exitCode != 0 || !output.startsWith('/')) {
+      throw StateError('Unable to convert a Windows path for Git Bash.');
     }
-    return normalized;
+    return output;
   }
 
   void _requireAbsolute(Directory release) {
