@@ -30,15 +30,15 @@ void main() {
       ..createSync();
     _script(
       File(p.join(installedPackaging.path, 'verify-release.sh')),
-      'exit 0',
+      '$_environmentGuard\nexit 0',
     );
     _script(
       File(p.join(installedPackaging.path, 'update.sh')),
-      'printf "applied:%s\\n" "\$1"',
+      '$_environmentGuard\nprintf "applied:%s\\n" "\$1"',
     );
     _script(
       File(p.join(installedPackaging.path, 'rollback.sh')),
-      'printf "rolled-back\\n"',
+      '$_environmentGuard\nprintf "rolled-back\\n"',
     );
   });
 
@@ -79,6 +79,13 @@ void main() {
     expect(output, contains('rolled-back'));
   });
 }
+
+const _environmentGuard = '''
+[[ -z "\${BASH_ENV:-}" && -z "\${ENV:-}" ]]
+[[ "\$HOME" == / ]]
+[[ "\$PATH" == /usr/bin:/bin ]]
+[[ "\$LC_ALL" == C ]]
+''';
 
 void _script(File file, String body) {
   file.writeAsStringSync('#!/usr/bin/env bash\nset -euo pipefail\n$body\n');

@@ -41,10 +41,13 @@ class ReleaseUpdateService {
     }
     final verifierPath = await _bashPath(verifier.path);
     final releasePath = await _bashPath(release.path);
-    final verified = await Process.run(await _bashExecutable(), [
-      verifierPath,
-      releasePath,
-    ], runInShell: false);
+    final verified = await Process.run(
+      await _bashExecutable(),
+      [verifierPath, releasePath],
+      environment: _bashEnvironment(),
+      includeParentEnvironment: false,
+      runInShell: false,
+    );
     if (verified.exitCode != 0) {
       throw StateError('Release manifest verification failed.');
     }
@@ -80,10 +83,8 @@ class ReleaseUpdateService {
     final result = await Process.run(
       await _bashExecutable(),
       [helperPath, ...bashArguments],
-      environment: {
-        ...Platform.environment,
-        'UNDER_CLAW_WORK_HOME': bashInstallRoot,
-      },
+      environment: _bashEnvironment(installRoot: bashInstallRoot),
+      includeParentEnvironment: false,
       runInShell: false,
     );
     if (result.exitCode != 0) {
@@ -97,12 +98,13 @@ class ReleaseUpdateService {
   Future<String> _bashPath(String value) async {
     if (!Platform.isWindows) return value;
     final tools = await _gitBashTools();
-    final converted = await Process.run(tools.cygpath, [
-      '-a',
-      '-u',
-      '--',
-      value,
-    ], runInShell: false);
+    final converted = await Process.run(
+      tools.cygpath,
+      ['-a', '-u', '--', value],
+      environment: const {},
+      includeParentEnvironment: false,
+      runInShell: false,
+    );
     final output = converted.stdout.toString().trim();
     if (converted.exitCode != 0 || !output.startsWith('/')) {
       throw StateError('Unable to convert a Windows path for Git Bash.');
@@ -112,6 +114,13 @@ class ReleaseUpdateService {
 
   Future<String> _bashExecutable() async =>
       Platform.isWindows ? (await _gitBashTools()).bash : 'bash';
+
+  Map<String, String> _bashEnvironment({String? installRoot}) => {
+    'HOME': '/',
+    'PATH': '/usr/bin:/bin',
+    'LC_ALL': 'C',
+    'UNDER_CLAW_WORK_HOME': ?installRoot,
+  };
 
   Future<_GitBashTools> _gitBashTools() async {
     final cached = _gitBashToolsCache;
@@ -128,9 +137,15 @@ class ReleaseUpdateService {
       final bash = File(p.join(gitRoot, 'bin', 'bash.exe'));
       final cygpath = File(p.join(gitRoot, 'usr', 'bin', 'cygpath.exe'));
       if (!bash.existsSync() || !cygpath.existsSync()) continue;
+      final resolvedBash = bash.resolveSymbolicLinksSync();
+      final resolvedCygpath = cygpath.resolveSymbolicLinksSync();
+      if (!p.isWithin(gitRoot, resolvedBash) ||
+          !p.isWithin(gitRoot, resolvedCygpath)) {
+        continue;
+      }
       return _gitBashToolsCache = _GitBashTools(
-        bash: bash.resolveSymbolicLinksSync(),
-        cygpath: cygpath.resolveSymbolicLinksSync(),
+        bash: resolvedBash,
+        cygpath: resolvedCygpath,
       );
     }
     throw StateError('Git Bash tools are unavailable for release operations.');
