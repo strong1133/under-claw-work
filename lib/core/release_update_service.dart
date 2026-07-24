@@ -101,7 +101,7 @@ class ReleaseUpdateService {
     final converted = await Process.run(
       tools.cygpath,
       ['-a', '-u', '--', value],
-      environment: const {},
+      environment: const {'LC_ALL': 'C'},
       includeParentEnvironment: false,
       runInShell: false,
     );
