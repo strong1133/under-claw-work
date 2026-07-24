@@ -205,13 +205,16 @@ class CanonicalRepository {
   }
 
   (Map<String, Object?>, String) _decode(String content) {
-    var yaml = content;
+    // Git may check portable text files out with CRLF on Windows. Normalize
+    // before locating Markdown frontmatter delimiters and parsing YAML.
+    final normalized = content.replaceAll('\r\n', '\n');
+    var yaml = normalized;
     var body = '';
-    if (content.startsWith('---\n')) {
-      final end = content.indexOf('\n---', 4);
+    if (normalized.startsWith('---\n')) {
+      final end = normalized.indexOf('\n---', 4);
       if (end < 0) throw const FormatException('Unclosed frontmatter.');
-      yaml = content.substring(4, end);
-      body = content.substring(end + 4).trimLeft();
+      yaml = normalized.substring(4, end);
+      body = normalized.substring(end + 4).trimLeft();
     }
     final value = loadYaml(yaml);
     if (value is! YamlMap) throw const FormatException('Expected YAML map.');
