@@ -84,7 +84,7 @@ void main() {
       find.byType(EnvironmentManagementScreen),
       matchesGoldenFile('goldens/environment_screen.png'),
     );
-  });
+  }, tags: 'golden');
 
   testWidgets('Design token gallery matches golden', (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 560));
@@ -103,7 +103,7 @@ void main() {
       find.byType(_TokenGallery),
       matchesGoldenFile('goldens/token_gallery.png'),
     );
-  });
+  }, tags: 'golden');
 }
 
 /// A compact visual proof-sheet of the token layer: palette swatches, the

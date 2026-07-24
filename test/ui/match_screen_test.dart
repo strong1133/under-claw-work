@@ -178,5 +178,5 @@ void main() {
       find.byType(MatchReviewScreen),
       matchesGoldenFile('goldens/match_screen.png'),
     );
-  });
+  }, tags: 'golden');
 }

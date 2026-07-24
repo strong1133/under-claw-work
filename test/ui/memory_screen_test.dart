@@ -93,5 +93,5 @@ void main() {
       find.byType(MemoryRecallScreen),
       matchesGoldenFile('goldens/memory_screen.png'),
     );
-  });
+  }, tags: 'golden');
 }

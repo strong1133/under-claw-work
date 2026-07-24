@@ -114,5 +114,5 @@ void main() {
       find.byType(AgentManagementScreen),
       matchesGoldenFile('goldens/agent_screen.png'),
     );
-  });
+  }, tags: 'golden');
 }
