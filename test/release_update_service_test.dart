@@ -62,7 +62,13 @@ void main() {
       installRoot: installRoot,
     ).apply(release);
 
-    expect(output, contains('applied:${release.path}'));
+    if (Platform.isWindows) {
+      expect(output, startsWith('applied:/'));
+      expect(output, contains(p.basename(root.path)));
+      expect(output, endsWith('/release'));
+    } else {
+      expect(output, contains('applied:${release.path}'));
+    }
   });
 
   test('rolls back through the installed rollback helper', () async {
