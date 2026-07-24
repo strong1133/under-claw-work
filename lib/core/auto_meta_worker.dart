@@ -1,3 +1,8 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
+
 import 'canonical_secret_verifier.dart';
 import 'canonical_repository.dart';
 import 'canonical_sync_service.dart';
@@ -6,11 +11,17 @@ import 'id.dart';
 import 'meta_prompt_service.dart';
 import 'models.dart';
 import 'notification_service.dart';
+import 'task_codec.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
+import 'workspace_mutation_lock.dart';
 
 abstract interface class CanonicalMetaPublisher {
-  Future<void> publish(String message, RemoteClaimLease lease);
+  Future<void> publish(
+    String message,
+    RemoteClaimLease lease, {
+    WorkTask? expectedTask,
+  });
 }
 
 class GitCanonicalMetaPublisher implements CanonicalMetaPublisher {
@@ -19,12 +30,39 @@ class GitCanonicalMetaPublisher implements CanonicalMetaPublisher {
   final Workspace workspace;
 
   @override
-  Future<void> publish(String message, RemoteClaimLease lease) async {
+  Future<void> publish(
+    String message,
+    RemoteClaimLease lease, {
+    WorkTask? expectedTask,
+  }) async {
+    final committedFileSha256 = <String, String>{};
+    if (expectedTask != null) {
+      final file = TaskRepository(workspace).canonicalFile(expectedTask.id);
+      final expectedBytes = utf8.encode(TaskCodec.encode(expectedTask));
+      if (!_bytesEqual(file.readAsBytesSync(), expectedBytes)) {
+        throw StateError('CANONICAL_EXPECTED_TASK_CHANGED: ${expectedTask.id}');
+      }
+      final relativePath = p.posix.joinAll(
+        p.relative(file.path, from: workspace.root.path).split(p.separator),
+      );
+      committedFileSha256[relativePath] = sha256
+          .convert(expectedBytes)
+          .toString();
+    }
     await CanonicalSyncService(workspace).syncCanonical(
       message: message,
       verifier: const CanonicalSecretVerifier(),
       remoteRefLeases: {lease.ref: lease.objectId},
+      committedFileSha256: committedFileSha256,
     );
+  }
+
+  static bool _bytesEqual(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
   }
 }
 
@@ -82,7 +120,10 @@ class AutoMetaWorker {
         task.approval == PromptApproval.stale;
   }
 
-  Future<AutoMetaRunResult?> runNext() async {
+  Future<AutoMetaRunResult?> runNext() =>
+      WorkspaceMutationLock.runExclusive(workspace, _runNextMutationLocked);
+
+  Future<AutoMetaRunResult?> _runNextMutationLocked() async {
     final repository = TaskRepository(workspace);
     final candidates = repository.list().where(isEligible).toList()
       ..sort((left, right) => left.id.compareTo(right.id));
@@ -143,7 +184,13 @@ class AutoMetaWorker {
             executableSha256: descriptor.executableSha256,
             errorType: error.runtimeType.toString(),
           );
-          final failureLease = await claims.renew(activeLease, ttl: claimTtl);
+          RemoteClaimLease? failureLease;
+          try {
+            failureLease = await claims.renew(activeLease, ttl: claimTtl);
+          } catch (_) {
+            _removeAudit(failureAudit);
+            rethrow;
+          }
           if (failureLease != null) {
             activeLease = failureLease;
             try {
@@ -160,8 +207,30 @@ class AutoMetaWorker {
           }
           rethrow;
         }
-        if (!await claims.isCurrent(activeLease)) {
-          repository.update(fencedSource);
+        final expectedSourceSha256 = TaskRepository.draftSha256(
+          fencedSource.promptDraft,
+        );
+        final currentAfterGeneration = repository.get(fencedSource.id);
+        if (currentAfterGeneration == null ||
+            !_sameTask(currentAfterGeneration, generated.task) ||
+            generated.task.promptDraftRevision !=
+                fencedSource.promptDraftRevision ||
+            generated.task.promptDraft != fencedSource.promptDraft ||
+            generated.task.promptMetaSourceRevision !=
+                fencedSource.promptDraftRevision ||
+            generated.task.promptMetaSourceSha256 != expectedSourceSha256) {
+          _discardGeneratedMeta(repository, generated.task);
+          continue;
+        }
+        late final bool ownsGeneratedLease;
+        try {
+          ownsGeneratedLease = await claims.isCurrent(activeLease);
+        } catch (_) {
+          _discardGeneratedMeta(repository, generated.task);
+          rethrow;
+        }
+        if (!ownsGeneratedLease) {
+          _discardGeneratedMeta(repository, generated.task);
           continue;
         }
         final audit = _recordSuccessAudit(
@@ -169,15 +238,30 @@ class AutoMetaWorker {
           generated: generated,
           runId: runId,
         );
-        if (!await claims.isCurrent(activeLease)) {
+        late final bool ownsAuditedLease;
+        try {
+          ownsAuditedLease = await claims.isCurrent(activeLease);
+        } catch (_) {
           _removeAudit(audit);
-          repository.update(fencedSource);
+          _discardGeneratedMeta(repository, generated.task);
+          rethrow;
+        }
+        if (!ownsAuditedLease) {
+          _removeAudit(audit);
+          _discardGeneratedMeta(repository, generated.task);
           continue;
         }
-        final publishLease = await claims.renew(activeLease, ttl: claimTtl);
+        RemoteClaimLease? publishLease;
+        try {
+          publishLease = await claims.renew(activeLease, ttl: claimTtl);
+        } catch (_) {
+          _removeAudit(audit);
+          _discardGeneratedMeta(repository, generated.task);
+          rethrow;
+        }
         if (publishLease == null) {
           _removeAudit(audit);
-          repository.update(fencedSource);
+          _discardGeneratedMeta(repository, generated.task);
           continue;
         }
         activeLease = publishLease;
@@ -186,29 +270,34 @@ class AutoMetaWorker {
             'worklog: generate Meta Prompt for ${fencedSource.id} rev '
             '${fencedSource.promptDraftRevision}',
             activeLease,
+            expectedTask: generated.task,
           );
         } catch (_) {
           _removeAudit(audit);
-          repository.update(fencedSource);
+          _discardGeneratedMeta(repository, generated.task);
           rethrow;
         }
         var status = AutoMetaRunStatus.generated;
-        try {
-          final report = await notifier.notifyMetaReady(
-            MetaReadyNotification(
-              taskId: generated.task.id,
-              title: generated.task.title,
-              sourceRevision: generated.task.promptMetaSourceRevision,
-              sourceSha256: generated.task.promptMetaSourceSha256,
-              environmentId: environmentId,
-              adapterId: generated.adapterId,
-            ),
-          );
-          if (report.failed > 0) {
+        final currentAfterPublish = repository.get(generated.task.id);
+        if (currentAfterPublish != null &&
+            _sameTask(currentAfterPublish, generated.task)) {
+          try {
+            final report = await notifier.notifyMetaReady(
+              MetaReadyNotification(
+                taskId: generated.task.id,
+                title: generated.task.title,
+                sourceRevision: generated.task.promptMetaSourceRevision,
+                sourceSha256: generated.task.promptMetaSourceSha256,
+                environmentId: environmentId,
+                adapterId: generated.adapterId,
+              ),
+            );
+            if (report.failed > 0) {
+              status = AutoMetaRunStatus.generatedWithNotificationFailure;
+            }
+          } catch (_) {
             status = AutoMetaRunStatus.generatedWithNotificationFailure;
           }
-        } catch (_) {
-          status = AutoMetaRunStatus.generatedWithNotificationFailure;
         }
         return AutoMetaRunResult(
           taskId: generated.task.id,
@@ -221,6 +310,21 @@ class AutoMetaWorker {
     }
     return null;
   }
+
+  void _discardGeneratedMeta(TaskRepository repository, WorkTask generated) {
+    repository.compareAndSwap(
+      generated,
+      generated.copyWith(
+        promptMeta: '',
+        promptMetaSourceRevision: 0,
+        promptMetaSourceSha256: '',
+        approval: PromptApproval.stale,
+      ),
+    );
+  }
+
+  bool _sameTask(WorkTask left, WorkTask right) =>
+      TaskCodec.encode(left) == TaskCodec.encode(right);
 
   (EntityKind, String) _recordStartAudit({
     required WorkTask source,

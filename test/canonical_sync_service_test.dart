@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:under_claw_work/core/worklog_core.dart';
@@ -76,6 +77,36 @@ void main() {
     expect(report.committed, isTrue);
     expect(report.pushed, isTrue);
     expect(await _output(local.path, ['status', '--porcelain']), isEmpty);
+  });
+
+  test('rejects and preserves a concurrent expected-file mutation', () async {
+    final repository = CanonicalRepository(workspace);
+    final domain = repository.list(EntityKind.domain).single;
+    EntityService(workspace).update(domain, title: 'Expected');
+    final file = repository.fileFor(EntityKind.domain, domain.id);
+    final relative = p.posix.joinAll(
+      p.relative(file.path, from: workspace.root.path).split(p.separator),
+    );
+    final expectedHash = sha256.convert(file.readAsBytesSync()).toString();
+    final beforeHead = await _output(local.path, ['rev-parse', 'HEAD']);
+
+    await expectLater(
+      CanonicalSyncService(workspace).syncCanonical(
+        message: 'must reject concurrent mutation',
+        verifier: _MutatingSecondVerifier(file),
+        committedFileSha256: {relative: expectedHash},
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('CANONICAL_WORKING_FILE_CHANGED'),
+        ),
+      ),
+    );
+
+    expect(await _output(local.path, ['rev-parse', 'HEAD']), beforeHead);
+    expect(file.readAsStringSync(), contains('Concurrent'));
   });
 
   test('rejects a pre-existing staged index without changing it', () async {
@@ -284,6 +315,24 @@ void main() {
       report.afterHead,
     );
   });
+}
+
+class _MutatingSecondVerifier implements CanonicalPrePushVerifier {
+  _MutatingSecondVerifier(this.file);
+
+  final File file;
+  var calls = 0;
+
+  @override
+  Future<void> verify(Workspace workspace) async {
+    calls++;
+    if (calls == 2) {
+      file.writeAsStringSync(
+        file.readAsStringSync().replaceFirst('Expected', 'Concurrent'),
+        flush: true,
+      );
+    }
+  }
 }
 
 class _RecordingVerifier implements CanonicalPrePushVerifier {

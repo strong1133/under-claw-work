@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'workspace.dart';
+import 'workspace_mutation_lock.dart';
 import 'schema_validator.dart';
 
 enum EntityKind {
@@ -46,7 +47,10 @@ class CanonicalRepository {
 
   final Workspace workspace;
 
-  CanonicalEntity create(CanonicalEntity entity) {
+  CanonicalEntity create(CanonicalEntity entity) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () => _create(entity));
+
+  CanonicalEntity _create(CanonicalEntity entity) {
     validate(entity);
     WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
@@ -56,7 +60,10 @@ class CanonicalRepository {
     return entity;
   }
 
-  CanonicalEntity update(CanonicalEntity entity) {
+  CanonicalEntity update(CanonicalEntity entity) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () => _update(entity));
+
+  CanonicalEntity _update(CanonicalEntity entity) {
     validate(entity);
     WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
@@ -72,7 +79,13 @@ class CanonicalRepository {
     return entity;
   }
 
-  void delete(EntityKind kind, String id) {
+  void delete(EntityKind kind, String id) =>
+      WorkspaceMutationLock.runExclusiveSync(
+        workspace,
+        () => _delete(kind, id),
+      );
+
+  void _delete(EntityKind kind, String id) {
     if (_immutableKinds.contains(kind)) {
       throw StateError('${kind.type} is immutable.');
     }

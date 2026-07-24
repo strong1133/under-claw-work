@@ -22,7 +22,17 @@ invokes the verified runtime adapter for
 `under-claw-meta-prompt`, saves the output, writes immutable Run,
 SkillInvocation, and Event evidence, validates the canonical graph, commits,
 and pushes. Notifications occur only after this transaction succeeds. The
-claim is renewed before both publications. Durable start evidence includes the
+claim is renewed before both publications. Adapter output is accepted only when
+its Draft revision, Draft bytes, source revision, and source SHA-256 still
+match both the post-start fenced Task snapshot and the repository Task after
+adapter save. The final Git transaction fences the exact expected Task file in
+both `HEAD` and the working tree immediately before the atomic push. Task writes,
+generation, canonical sync, and rollback share a reentrant cross-process mutation
+lock; compensation uses compare-and-swap and cannot overwrite a newer Task.
+Claim-check and renewal exceptions remove attempt-local Meta and unpublished
+audits before propagating. A mismatch preserves a newer local Draft, skips the
+final publication, and suppresses stale notification delivery. Durable start
+evidence includes the
 verified adapter executable SHA-256; adapter exceptions produce a failed Run,
 SkillInvocation, and Event containing only the exception type (not its possibly
 secret message) and are published through the same atomic claim fence.

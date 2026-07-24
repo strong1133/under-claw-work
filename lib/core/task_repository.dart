@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'models.dart';
 import 'task_codec.dart';
 import 'workspace.dart';
+import 'workspace_mutation_lock.dart';
 import 'schema_validator.dart';
 
 class TaskRepository {
@@ -40,7 +41,10 @@ class TaskRepository {
     return file.existsSync() ? TaskCodec.read(file) : null;
   }
 
-  WorkTask create(WorkTask task) {
+  WorkTask create(WorkTask task) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () => _create(task));
+
+  WorkTask _create(WorkTask task) {
     _validate(task);
     final file = _file(task.id);
     file.parent.createSync(recursive: true);
@@ -49,7 +53,10 @@ class TaskRepository {
     return task;
   }
 
-  WorkTask update(WorkTask task) {
+  WorkTask update(WorkTask task) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () => _update(task));
+
+  WorkTask _update(WorkTask task) {
     _validate(task);
     final file = _existingFile(task.id);
     if (!file.existsSync()) throw StateError('Task does not exist: ${task.id}');
@@ -90,7 +97,30 @@ class TaskRepository {
     return update(task.copyWith(approval: PromptApproval.approved));
   }
 
-  void delete(String id) {
+  File canonicalFile(String id) => _existingFile(id);
+
+  bool compareAndSwap(WorkTask expected, WorkTask replacement) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () {
+        if (replacement.id != expected.id) {
+          throw ArgumentError.value(
+            replacement.id,
+            'replacement.id',
+            'must match expected.id ${expected.id}',
+          );
+        }
+        final current = get(expected.id);
+        if (current == null ||
+            TaskCodec.encode(current) != TaskCodec.encode(expected)) {
+          return false;
+        }
+        _update(replacement);
+        return true;
+      });
+
+  void delete(String id) =>
+      WorkspaceMutationLock.runExclusiveSync(workspace, () => _delete(id));
+
+  void _delete(String id) {
     final file = _existingFile(id);
     if (!file.existsSync()) throw StateError('Task does not exist: $id');
     file.deleteSync();

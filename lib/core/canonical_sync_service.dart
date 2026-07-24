@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'canonical_repository.dart';
@@ -8,6 +9,7 @@ import 'projection.dart';
 import 'schema_validator.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
+import 'workspace_mutation_lock.dart';
 
 abstract interface class CanonicalPrePushVerifier {
   Future<void> verify(Workspace workspace);
@@ -47,6 +49,22 @@ class CanonicalSyncService {
     required String message,
     required CanonicalPrePushVerifier verifier,
     Map<String, String> remoteRefLeases = const {},
+    Map<String, String> committedFileSha256 = const {},
+  }) => WorkspaceMutationLock.runExclusive(
+    workspace,
+    () => _syncMutationLocked(
+      message: message,
+      verifier: verifier,
+      remoteRefLeases: remoteRefLeases,
+      committedFileSha256: committedFileSha256,
+    ),
+  );
+
+  Future<CanonicalSyncReport> _syncMutationLocked({
+    required String message,
+    required CanonicalPrePushVerifier verifier,
+    required Map<String, String> remoteRefLeases,
+    required Map<String, String> committedFileSha256,
   }) async {
     workspace.ensureLayout();
     final lock = File(p.join(workspace.local.path, 'canonical-sync.lock'));
@@ -54,36 +72,40 @@ class CanonicalSyncService {
     if (!_activeWorkspaceLocks.add(lockPath)) {
       throw StateError('Canonical sync is already running for this workspace.');
     }
-    late final RandomAccessFile handle;
+    RandomAccessFile? handle;
+    var locked = false;
     try {
-      handle = lock.openSync(mode: FileMode.append);
-    } on FileSystemException {
-      _activeWorkspaceLocks.remove(lockPath);
-      rethrow;
-    }
-    try {
-      handle.lockSync(FileLock.exclusive);
-      handle.setPositionSync(0);
-      handle.truncateSync(0);
-      handle.writeStringSync(
-        'pid=$pid\nstarted_at=${DateTime.now().toUtc().toIso8601String()}\n',
-      );
-      handle.flushSync();
-    } on FileSystemException {
-      handle.closeSync();
-      _activeWorkspaceLocks.remove(lockPath);
-      throw StateError('Canonical sync is already running for this workspace.');
-    }
-    try {
+      try {
+        handle = lock.openSync(mode: FileMode.append);
+        handle.lockSync(FileLock.exclusive);
+        locked = true;
+        handle.setPositionSync(0);
+        handle.truncateSync(0);
+        handle.writeStringSync(
+          'pid=$pid\nstarted_at=${DateTime.now().toUtc().toIso8601String()}\n',
+        );
+        handle.flushSync();
+      } on FileSystemException {
+        throw StateError(
+          'Canonical sync is already running for this workspace.',
+        );
+      }
       return await _syncLocked(
         message: message,
         verifier: verifier,
         remoteRefLeases: remoteRefLeases,
+        committedFileSha256: committedFileSha256,
       );
     } finally {
-      handle.unlockSync();
-      handle.closeSync();
-      _activeWorkspaceLocks.remove(lockPath);
+      try {
+        if (locked) handle!.unlockSync();
+      } finally {
+        try {
+          handle?.closeSync();
+        } finally {
+          _activeWorkspaceLocks.remove(lockPath);
+        }
+      }
       // Keep the pathname and inode stable. Deleting an advisory-lock file
       // permits a third process to lock a new inode while a waiter still holds
       // the original one.
@@ -94,6 +116,7 @@ class CanonicalSyncService {
     required String message,
     required CanonicalPrePushVerifier verifier,
     required Map<String, String> remoteRefLeases,
+    required Map<String, String> committedFileSha256,
   }) async {
     if (message.trim().isEmpty) {
       throw const FormatException('Canonical sync commit message is required.');
@@ -102,6 +125,16 @@ class CanonicalSyncService {
       if (!RegExp(r'^refs/[A-Za-z0-9._/-]+$').hasMatch(fence.key) ||
           !RegExp(r'^[0-9a-f]{40,64}$').hasMatch(fence.value)) {
         throw const FormatException('Invalid canonical push fence.');
+      }
+    }
+    for (final expectation in committedFileSha256.entries) {
+      if (p.posix.isAbsolute(expectation.key) ||
+          expectation.key != p.posix.normalize(expectation.key) ||
+          expectation.key.contains('\\') ||
+          (expectation.key != 'workdb' &&
+              !p.posix.isWithin('workdb', expectation.key)) ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectation.value)) {
+        throw const FormatException('Invalid committed canonical file fence.');
       }
     }
     final upstream = await _requireRepository();
@@ -160,6 +193,7 @@ class CanonicalSyncService {
       // Remote non-overlapping changes may alter the graph. Validate the merged
       // canonical tree and scan it again immediately before the exact push.
       await _validateAndVerify(verifier);
+      await _verifyCommittedFiles(committedFileSha256);
       final expectedRemote = await _output(['rev-parse', upstream.trackingRef]);
       final afterHead = await _output(['rev-parse', 'HEAD']);
       final fencedRefs = remoteRefLeases.entries.toList()
@@ -188,7 +222,11 @@ class CanonicalSyncService {
         pushed: true,
       );
     } on Object {
+      final concurrentFiles = _captureDivergentExpectedFiles(
+        committedFileSha256,
+      );
       await _restore(beforeHead, snapshot);
+      _restoreConcurrentFiles(concurrentFiles);
       rethrow;
     }
   }
@@ -206,6 +244,71 @@ class CanonicalSyncService {
       projection.dispose();
     }
     await verifier.verify(workspace);
+  }
+
+  Future<void> _verifyCommittedFiles(Map<String, String> expectations) async {
+    for (final expectation in expectations.entries) {
+      final result = await Process.run(
+        'git',
+        ['show', 'HEAD:${expectation.key}'],
+        workingDirectory: workspace.root.path,
+        runInShell: false,
+        stdoutEncoding: null,
+      );
+      if (result.exitCode != 0 || result.stdout is! List<int>) {
+        throw StateError(
+          'CANONICAL_COMMITTED_FILE_MISSING: ${expectation.key}',
+        );
+      }
+      final actual = sha256.convert(result.stdout as List<int>).toString();
+      if (actual != expectation.value) {
+        throw StateError(
+          'CANONICAL_COMMITTED_FILE_CHANGED: ${expectation.key}',
+        );
+      }
+      final workingFile = File(
+        p.joinAll([workspace.root.path, ...p.posix.split(expectation.key)]),
+      );
+      if (!workingFile.existsSync() ||
+          sha256.convert(workingFile.readAsBytesSync()).toString() !=
+              expectation.value) {
+        throw StateError('CANONICAL_WORKING_FILE_CHANGED: ${expectation.key}');
+      }
+    }
+  }
+
+  Map<String, List<int>?> _captureDivergentExpectedFiles(
+    Map<String, String> expectations,
+  ) {
+    final divergent = <String, List<int>?>{};
+    for (final expectation in expectations.entries) {
+      final file = File(
+        p.joinAll([workspace.root.path, ...p.posix.split(expectation.key)]),
+      );
+      if (!file.existsSync()) {
+        divergent[expectation.key] = null;
+        continue;
+      }
+      final bytes = file.readAsBytesSync();
+      if (sha256.convert(bytes).toString() != expectation.value) {
+        divergent[expectation.key] = bytes;
+      }
+    }
+    return divergent;
+  }
+
+  void _restoreConcurrentFiles(Map<String, List<int>?> files) {
+    for (final entry in files.entries) {
+      final file = File(
+        p.joinAll([workspace.root.path, ...p.posix.split(entry.key)]),
+      );
+      if (entry.value == null) {
+        if (file.existsSync()) file.deleteSync();
+        continue;
+      }
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(entry.value!, flush: true);
+    }
   }
 
   Future<_GitUpstream> _requireRepository() async {

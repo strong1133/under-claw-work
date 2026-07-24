@@ -163,6 +163,120 @@ void main() {
     expect(publisher.messages, hasLength(2));
   });
 
+  test(
+    'rejects adapter output for a Draft newer than the fenced source',
+    () async {
+      final task = _task();
+      TaskRepository(workspace).create(task);
+      final claims = _FakeClaims(acquire: true);
+      final publisher = _RecordingPublisher();
+      final worker = AutoMetaWorker(
+        workspace: workspace,
+        environmentId: 'ENV-astro',
+        adapterId: 'test-meta',
+        claims: claims,
+        generator: _MutatingMetaPromptService(workspace, runtimes: runtimes),
+        publisher: publisher,
+        notifier: _RecordingNotifier(),
+      );
+
+      final result = await worker.runNext();
+
+      expect(result, isNull);
+      expect(publisher.messages, hasLength(1));
+      final current = TaskRepository(workspace).get(task.id)!;
+      expect(current.promptDraft, 'Draft changed before adapter invocation');
+      expect(current.promptDraftRevision, 2);
+      expect(current.promptMeta, isEmpty);
+      expect(current.approval, PromptApproval.stale);
+    },
+  );
+
+  test(
+    'rejects adapter output when the Draft changes after Meta save',
+    () async {
+      final task = _task();
+      TaskRepository(workspace).create(task);
+      final claims = _FakeClaims(acquire: true);
+      final publisher = _RecordingPublisher();
+      final worker = AutoMetaWorker(
+        workspace: workspace,
+        environmentId: 'ENV-astro',
+        adapterId: 'test-meta',
+        claims: claims,
+        generator: _PostSaveMutatingMetaPromptService(
+          workspace,
+          runtimes: runtimes,
+        ),
+        publisher: publisher,
+      );
+
+      final result = await worker.runNext();
+
+      expect(result, isNull);
+      expect(publisher.messages, hasLength(1));
+      final current = TaskRepository(workspace).get(task.id)!;
+      expect(current.promptDraft, 'Draft changed after Meta save');
+      expect(current.promptDraftRevision, task.promptDraftRevision + 1);
+      expect(current.approval, PromptApproval.stale);
+    },
+  );
+
+  test('cleans generated state when claim-current check throws', () async {
+    final task = _task();
+    TaskRepository(workspace).create(task);
+    final worker = AutoMetaWorker(
+      workspace: workspace,
+      environmentId: 'ENV-astro',
+      adapterId: 'test-meta',
+      claims: _FakeClaims(throwIsCurrentAt: 2),
+      generator: MetaPromptService(workspace, runtimes: runtimes),
+      publisher: _RecordingPublisher(),
+    );
+
+    await expectLater(worker.runNext(), throwsStateError);
+
+    expect(TaskRepository(workspace).get(task.id)!.promptMeta, isEmpty);
+    _expectOnlyStartAudit(workspace);
+  });
+
+  test('cleans generated state and audits when final renewal throws', () async {
+    final task = _task();
+    TaskRepository(workspace).create(task);
+    final worker = AutoMetaWorker(
+      workspace: workspace,
+      environmentId: 'ENV-astro',
+      adapterId: 'test-meta',
+      claims: _FakeClaims(throwRenewAt: 2),
+      generator: MetaPromptService(workspace, runtimes: runtimes),
+      publisher: _RecordingPublisher(),
+    );
+
+    await expectLater(worker.runNext(), throwsStateError);
+
+    expect(TaskRepository(workspace).get(task.id)!.promptMeta, isEmpty);
+    _expectOnlyStartAudit(workspace);
+  });
+
+  test('removes failure audits when failure renewal throws', () async {
+    final task = _task();
+    TaskRepository(workspace).create(task);
+    adapter.writeAsStringSync("void main() { print('invalid'); }\n");
+    final worker = AutoMetaWorker(
+      workspace: workspace,
+      environmentId: 'ENV-astro',
+      adapterId: 'test-meta',
+      claims: _FakeClaims(throwRenewAt: 2),
+      generator: MetaPromptService(workspace, runtimes: runtimes),
+      publisher: _RecordingPublisher(),
+    );
+
+    await expectLater(worker.runNext(), throwsStateError);
+
+    expect(TaskRepository(workspace).get(task.id)!.promptMeta, isEmpty);
+    _expectOnlyStartAudit(workspace);
+  });
+
   test('publishes durable start evidence before a failed adapter', () async {
     TaskRepository(workspace).create(_task());
     adapter.writeAsStringSync("void main() { print('invalid'); }\n");
@@ -214,12 +328,28 @@ void main() {
   });
 }
 
+void _expectOnlyStartAudit(Workspace workspace) {
+  final canonical = CanonicalRepository(workspace);
+  expect(canonical.list(EntityKind.run), isEmpty);
+  expect(canonical.list(EntityKind.invocation), isEmpty);
+  expect(
+    canonical
+        .list(EntityKind.event)
+        .map((event) => event.data['event_type'])
+        .toList(),
+    ['meta_prompt_generation_started'],
+  );
+}
+
 class _FakeClaims implements RemoteClaimProvider {
-  _FakeClaims({this.acquire = true});
+  _FakeClaims({this.acquire = true, this.throwIsCurrentAt, this.throwRenewAt});
 
   final bool acquire;
+  final int? throwIsCurrentAt;
+  final int? throwRenewAt;
   bool released = false;
   int renewed = 0;
+  int isCurrentCalls = 0;
 
   @override
   Future<RemoteClaimLease?> tryAcquire({
@@ -241,7 +371,13 @@ class _FakeClaims implements RemoteClaimProvider {
       : null;
 
   @override
-  Future<bool> isCurrent(RemoteClaimLease lease) async => true;
+  Future<bool> isCurrent(RemoteClaimLease lease) async {
+    isCurrentCalls++;
+    if (isCurrentCalls == throwIsCurrentAt) {
+      throw StateError('claim current check failed');
+    }
+    return true;
+  }
 
   @override
   Future<bool> release(RemoteClaimLease lease) async {
@@ -256,6 +392,9 @@ class _FakeClaims implements RemoteClaimProvider {
     DateTime? now,
   }) async {
     renewed++;
+    if (renewed == throwRenewAt) {
+      throw StateError('claim renewal failed');
+    }
     return lease;
   }
 }
@@ -264,8 +403,52 @@ class _RecordingPublisher implements CanonicalMetaPublisher {
   final messages = <String>[];
 
   @override
-  Future<void> publish(String message, RemoteClaimLease lease) async =>
-      messages.add(message);
+  Future<void> publish(
+    String message,
+    RemoteClaimLease lease, {
+    WorkTask? expectedTask,
+  }) async => messages.add(message);
+}
+
+class _MutatingMetaPromptService extends MetaPromptService {
+  _MutatingMetaPromptService(super.workspace, {required super.runtimes});
+
+  @override
+  Future<MetaPromptGenerationResult> generate({
+    required String taskId,
+    required String adapterId,
+  }) {
+    final repository = TaskRepository(workspace);
+    repository.saveDraft(
+      repository.get(taskId)!,
+      'Draft changed before adapter invocation',
+    );
+    return super.generate(taskId: taskId, adapterId: adapterId);
+  }
+}
+
+class _PostSaveMutatingMetaPromptService extends MetaPromptService {
+  _PostSaveMutatingMetaPromptService(
+    super.workspace, {
+    required super.runtimes,
+  });
+
+  @override
+  Future<MetaPromptGenerationResult> generate({
+    required String taskId,
+    required String adapterId,
+  }) async {
+    final generated = await super.generate(
+      taskId: taskId,
+      adapterId: adapterId,
+    );
+    final repository = TaskRepository(workspace);
+    repository.saveDraft(
+      repository.get(taskId)!,
+      'Draft changed after Meta save',
+    );
+    return generated;
+  }
 }
 
 class _RecordingNotifier implements MetaReadyNotifier {
