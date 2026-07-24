@@ -15,10 +15,12 @@ class ReleaseUpdateStatus {
 }
 
 class ReleaseUpdateService {
-  ReleaseUpdateService({Directory? installRoot})
+  ReleaseUpdateService({Directory? installRoot, this.windowsGitBashRoot})
     : installRoot = installRoot ?? Directory(_defaultInstallRoot());
 
   final Directory installRoot;
+  final Directory? windowsGitBashRoot;
+  _GitBashTools? _gitBashToolsCache;
 
   Future<ReleaseUpdateStatus> check(Directory release) async {
     _requireAbsolute(release);
@@ -39,7 +41,7 @@ class ReleaseUpdateService {
     }
     final verifierPath = await _bashPath(verifier.path);
     final releasePath = await _bashPath(release.path);
-    final verified = await Process.run('bash', [
+    final verified = await Process.run(await _bashExecutable(), [
       verifierPath,
       releasePath,
     ], runInShell: false);
@@ -76,7 +78,7 @@ class ReleaseUpdateService {
     }
     final bashInstallRoot = await _bashPath(installRoot.path);
     final result = await Process.run(
-      'bash',
+      await _bashExecutable(),
       [helperPath, ...bashArguments],
       environment: {
         ...Platform.environment,
@@ -94,10 +96,11 @@ class ReleaseUpdateService {
 
   Future<String> _bashPath(String value) async {
     if (!Platform.isWindows) return value;
-    final converted = await Process.run('bash', [
-      '-lc',
-      r'cygpath -a -u -- "$1"',
-      'under-claw-cygpath',
+    final tools = await _gitBashTools();
+    final converted = await Process.run(tools.cygpath, [
+      '-a',
+      '-u',
+      '--',
       value,
     ], runInShell: false);
     final output = converted.stdout.toString().trim();
@@ -105,6 +108,32 @@ class ReleaseUpdateService {
       throw StateError('Unable to convert a Windows path for Git Bash.');
     }
     return output;
+  }
+
+  Future<String> _bashExecutable() async =>
+      Platform.isWindows ? (await _gitBashTools()).bash : 'bash';
+
+  Future<_GitBashTools> _gitBashTools() async {
+    final cached = _gitBashToolsCache;
+    if (cached != null) return cached;
+    final candidates = windowsGitBashRoot == null
+        ? <Directory>[
+            Directory(r'C:\Program Files\Git'),
+            Directory(r'C:\Program Files (x86)\Git'),
+          ]
+        : <Directory>[windowsGitBashRoot!];
+    for (final candidate in candidates) {
+      if (!p.isAbsolute(candidate.path) || !candidate.existsSync()) continue;
+      final gitRoot = candidate.resolveSymbolicLinksSync();
+      final bash = File(p.join(gitRoot, 'bin', 'bash.exe'));
+      final cygpath = File(p.join(gitRoot, 'usr', 'bin', 'cygpath.exe'));
+      if (!bash.existsSync() || !cygpath.existsSync()) continue;
+      return _gitBashToolsCache = _GitBashTools(
+        bash: bash.resolveSymbolicLinksSync(),
+        cygpath: cygpath.resolveSymbolicLinksSync(),
+      );
+    }
+    throw StateError('Git Bash tools are unavailable for release operations.');
   }
 
   void _requireAbsolute(Directory release) {
@@ -126,4 +155,11 @@ class ReleaseUpdateService {
     }
     return p.join(home, '.local', 'share', 'under-claw-work');
   }
+}
+
+class _GitBashTools {
+  const _GitBashTools({required this.bash, required this.cygpath});
+
+  final String bash;
+  final String cygpath;
 }
