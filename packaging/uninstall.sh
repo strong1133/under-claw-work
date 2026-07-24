@@ -74,7 +74,7 @@ remove_owned_host_files() {
 
 if [[ "$mode" == "app" ]]; then
   remove_owned_host_files false
-  rm -f "$install_root/bin/worklog"
+  rm -f "$install_root/bin/worklog" "$install_root/bin/worklog.exe"
   filtered_manifest="$manifest.app-only"
   awk -F '\t' '$1 != "owned_command" { print }' "$manifest" > "$filtered_manifest"
   mv "$filtered_manifest" "$manifest"
@@ -83,7 +83,7 @@ if [[ "$mode" == "app" ]]; then
 fi
 
 remove_owned_host_files true
-rm -f "$install_root/bin/worklog"
+rm -f "$install_root/bin/worklog" "$install_root/bin/worklog.exe"
 rm -rf "$install_root/lib"
 
 if [[ "$mode" == "full" ]]; then

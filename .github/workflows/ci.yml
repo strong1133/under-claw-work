@@ -32,18 +32,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
           flutter build linux
+      - shell: bash
+        run: |
+          bash packaging/build-unsigned.sh \
+            --os "$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]')" \
+            --output build/distribution
+      - shell: bash
+        run: |
+          release_dir="$(mktemp -d)"
+          tar -xzf "build/distribution/under-claw-work-$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]')-unsigned.tar.gz" -C "$release_dir"
+          bash tool/packaging_smoke.sh "$release_dir"/under-claw-work-*-unsigned
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: under-claw-work-${{ runner.os }}-unsigned-mvp
           if-no-files-found: error
           path: |
-            build/cli/bundle/**
-            build/macos/Build/Products/Release/under_claw_work.app/**
-            build/windows/x64/runner/Release/**
-            build/linux/x64/release/bundle/**
-            packaging/install.sh
-            packaging/uninstall.sh
-            skills/**
+            build/distribution/under-claw-work-*-unsigned.tar.gz
 
   secret-scan:
     runs-on: ubuntu-latest

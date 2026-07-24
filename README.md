@@ -160,8 +160,24 @@ worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environme
 worklog migrate-rollback <workspace> <import-id>
 worklog git-status <workspace>
 worklog git-pull <workspace>
+worklog git-sync <workspace> [commit-message]
+worklog runtime-register <workspace> <descriptor-json>
+worklog runtime-list <workspace>
+worklog meta-generate <workspace> <task-id> <adapter-id>
+worklog worker-next-agent <workspace> <environment-id> <adapter-id>
 worklog doctor <workspace>
 ```
+
+`git-sync`는 graph/schema와 민감정보 검사를 통과한 Git 정본만 configured
+upstream으로 publish하며, 충돌 시 원격을 덮어쓰지 않는다. Runtime descriptor는
+`.worklog/`에만 저장되고 executable·독립 reviewer checksum을 매 실행 검증한다.
+배포 archive에는 production descriptor가 내장되지 않으므로 acceptance를 통과한
+generic/host adapter를 `runtime-register`로 등록하기 전 Meta/worker 실행은
+fail-closed 한다.
+
+CI의 OS별 unsigned archive는 GUI, precompiled CLI, pinned skill bundle과
+installer/updater를 한 파일에 포함한다. archive 내부 checksum은 손상 검출용이며
+publisher identity나 코드 서명을 대신하지 않는다.
 
 ## 보안 경계
 

@@ -1,6 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:under_claw_work/core/worklog_core.dart';
+import 'package:under_claw_work/core/worklog_cli_core.dart';
 
 Future<void> main(List<String> arguments) async {
   if (arguments.isEmpty || arguments.contains('--help')) {
@@ -58,10 +59,17 @@ Commands:
   task-candidate-dispose <workspace> <candidate-id> <accept|reject>
   task-candidate-list <workspace>
   task-prompt <workspace> <task-id> <draft|meta|approve> [content-file]
+  runtime-register <workspace> <descriptor-json>
+             register a local verified JSON runtime descriptor
+  runtime-list <workspace>
+  meta-generate <workspace> <task-id> <adapter-id>
+             generate a pending Meta Prompt through a verified adapter
   task-control <workspace> <task-id> <command> [run-id]
              request start|pause|resume|cancel|complete
   worker-next <workspace> <environment-id> <executable> [runner-arguments...]
              execute the oldest pending start request using a JSON runner
+  worker-next-agent <workspace> <environment-id> <adapter-id>
+             execute through a registered orchestration adapter
   worker-recover <workspace> <environment-id>
              mark expired worker runs interrupted and release stale claims
   control-disposition <workspace> <request-id> <accepted|rejected|withdrawn|expired|superseded>
@@ -69,6 +77,8 @@ Commands:
   review-record <workspace> <run-id> <score> <independent:true|false>
   git-status <workspace>
   git-pull <workspace>
+  git-sync <workspace> [commit-message]
+             validate, secret-scan, commit, reconcile and push canonical data
   projection-rebuild <workspace> [--force]
   migrate-dry-run <workspace> <legacy-path>
   migrate-import <workspace> <legacy-path> <domain-id> <milestone-id>
@@ -529,6 +539,39 @@ Commands:
             '${result.error == null ? "" : "\terror=${result.error}"}',
           );
         }
+      case 'worker-next-agent':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'worker-next-agent requires workspace, environment and adapter id.',
+          );
+        }
+        final descriptor = InstalledRuntimeRegistry(
+          workspace,
+        ).require(arguments[3], capability: 'orchestration');
+        final result = await TaskExecutionWorker(
+          workspace: workspace,
+          projection: projection,
+          environmentId: arguments[2],
+          remoteClaims: GitRemoteClaimService(workspace),
+          runner: ProcessRunnerAdapter(
+            executable: descriptor.executable,
+            arguments: descriptor.fixedArguments,
+            workingDirectory: workspace.root.path,
+            reviewerVerifier: ExternalReviewerArtifactVerifier(
+              executable: descriptor.reviewerExecutable!,
+              arguments: descriptor.reviewerFixedArguments,
+            ),
+          ),
+        ).runNext();
+        if (result == null) {
+          stdout.writeln('worker=idle');
+        } else {
+          stdout.writeln(
+            'run=${result.runId}\tstatus=${result.status}\t'
+            'adapter=${descriptor.id}'
+            '${result.error == null ? "" : "\terror=${result.error}"}',
+          );
+        }
       case 'worker-recover':
         if (arguments.length < 3) {
           throw const FormatException(
@@ -640,6 +683,43 @@ Commands:
         };
         projection.rebuild();
         stdout.writeln('task=${updated.id} approval=${updated.approval.name}');
+      case 'runtime-register':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'runtime-register requires workspace and descriptor JSON.',
+          );
+        }
+        final decoded = jsonDecode(File(arguments[2]).readAsStringSync());
+        if (decoded is! Map<String, Object?>) {
+          throw const FormatException('Runtime descriptor must be an object.');
+        }
+        final descriptor = InstalledRuntimeDescriptor.fromJson(decoded);
+        InstalledRuntimeRegistry(workspace).register(descriptor);
+        stdout.writeln(
+          'runtime=${descriptor.id} capabilities='
+          '${(descriptor.capabilities.toList()..sort()).join(",")}',
+        );
+      case 'runtime-list':
+        for (final descriptor in InstalledRuntimeRegistry(workspace).list()) {
+          stdout.writeln(
+            '${descriptor.id}\t${descriptor.protocol}\t'
+            'capabilities=${(descriptor.capabilities.toList()..sort()).join(",")}',
+          );
+        }
+      case 'meta-generate':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'meta-generate requires workspace, task id and adapter id.',
+          );
+        }
+        final result = await MetaPromptService(
+          workspace,
+        ).generate(taskId: arguments[2], adapterId: arguments[3]);
+        projection.rebuild();
+        stdout.writeln(
+          'task=${result.task.id} approval=${result.task.approval.name} '
+          'adapter=${result.adapterId} output_sha256=${result.outputSha256}',
+        );
       case 'control-disposition':
         if (arguments.length < 4) {
           throw const FormatException(
@@ -713,6 +793,19 @@ Commands:
         await GitSyncService(workspace).pullFastForward();
         projection.rebuild();
         stdout.writeln('pull=ok');
+      case 'git-sync':
+        final report = await CanonicalSyncService(workspace).syncCanonical(
+          message: arguments.length > 2
+              ? arguments.skip(2).join(' ')
+              : 'worklog: sync canonical data',
+          verifier: const CanonicalSecretVerifier(),
+        );
+        projection.rebuild();
+        stdout.writeln(
+          'sync=ok before=${report.beforeHead} after=${report.afterHead} '
+          'committed=${report.committed} rebased=${report.rebased} '
+          'pushed=${report.pushed}',
+        );
       case 'projection-rebuild':
         final result = ProjectionLifecycle(
           workspace,

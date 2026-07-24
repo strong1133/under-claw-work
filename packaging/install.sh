@@ -10,18 +10,48 @@ manifest="$install_root/install-manifest.tsv"
 case "$install_root" in
   "$HOME"|"${HOME}/"|"/"|"") echo "Unsafe install root" >&2; exit 64 ;;
 esac
+[[ "$install_root" = /* ]] || { echo "Install root must be absolute" >&2; exit 64; }
+packaged=0
+if [[ -d "$product_root/app" || -d "$product_root/bundled-skills" ||
+  -f "$product_root/RELEASE-VERSION.txt" ||
+  -f "$product_root/UNSIGNED-NOTICE.txt" ||
+  -f "$product_root/ACCEPTED-RUNTIMES.txt" ]]; then
+  packaged=1
+fi
+if [[ "$packaged" == "1" ]]; then
+  [[ -f "$product_root/release-manifest.tsv" &&
+    -x "$product_root/packaging/verify-release.sh" ]] || {
+      echo "Packaged release is missing its manifest or verifier" >&2
+      exit 65
+    }
+  bash "$product_root/packaging/verify-release.sh" "$product_root"
+fi
 
 staging="$(mktemp -d)"
-cleanup() { rm -rf "$staging"; }
+candidate=""
+backup=""
+cleanup() {
+  rm -rf "$staging"
+  [[ -z "$candidate" || ! -d "$candidate" ]] || rm -rf "$candidate"
+}
 trap cleanup EXIT
 
-if [[ -z "$source_repo" ]]; then
+if [[ -z "$source_repo" && -d "$product_root/bundled-skills/upstream/.git" ]]; then
+  source_repo="$product_root/bundled-skills/upstream"
+elif [[ -z "$source_repo" && -d "$product_root/bundled-skills/upstream/skills" ]]; then
+  source_repo="$product_root/bundled-skills/upstream"
+elif [[ -z "$source_repo" ]]; then
   source_repo="$staging/upstream"
   git clone --quiet https://github.com/strong1133/under-claw-jarvis-plan.git "$source_repo"
   git -C "$source_repo" checkout --quiet "$revision"
 fi
-if [[ "$(git -C "$source_repo" rev-parse HEAD)" != "$revision" ]]; then
+if [[ -d "$source_repo/.git" && "$(git -C "$source_repo" rev-parse HEAD)" != "$revision" ]]; then
   echo "Skill source revision mismatch" >&2
+  exit 65
+fi
+if [[ ! -d "$source_repo/.git" &&
+  "$(tr -d '[:space:]' < "$source_repo/REVISION" 2>/dev/null || true)" != "$revision" ]]; then
+  echo "Bundled skill revision mismatch" >&2
   exit 65
 fi
 
@@ -57,18 +87,6 @@ for pair in \
   }
 done
 
-if [[ ! -x "$product_root/build/cli/bundle/bin/worklog" ]]; then
-  echo "Required precompiled Core CLI is missing." >&2
-  exit 66
-fi
-
-mkdir -p "$install_root/bin"
-install -m 0755 "$product_root/build/cli/bundle/bin/worklog" "$install_root/bin/worklog"
-if [[ -d "$product_root/build/cli/bundle/lib" ]]; then
-  rm -rf "$install_root/lib"
-  cp -R "$product_root/build/cli/bundle/lib" "$install_root/lib"
-fi
-
 requested_hosts="${UNDER_CLAW_HOSTS:-auto}"
 host_requested() {
   [[ "$requested_hosts" == "auto" || ",$requested_hosts," == *",$1,"* ]]
@@ -79,12 +97,89 @@ host_detected() {
   if [[ "$requested_hosts" != "auto" ]]; then return 0; fi
   [[ -d "$home_path" ]] || command -v "$executable" >/dev/null 2>&1
 }
+preflight_skill_tree() {
+  local host_home="$1"
+  local skill_root="$host_home/skills"
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
+    under-claw-jarvis-plan under-claw-work-plan; do
+    local target="$skill_root/$skill"
+    if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
+      echo "Refusing to overwrite non-owned skill: $target" >&2
+      exit 73
+    fi
+  done
+}
+hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
+  host_detected hermes hermes "$hermes_home"; then
+  preflight_skill_tree "$hermes_home"
+fi
+if host_detected claude-code claude "$claude_home"; then
+  preflight_skill_tree "$claude_home"
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
+    under-claw-jarvis-plan under-claw-work-plan; do
+    command_target="$claude_home/commands/$skill.md"
+    if [[ -e "$command_target" &&
+      ! -f "$command_target.under-claw-work-owned" ]]; then
+      echo "Refusing to overwrite non-owned command: $command_target" >&2
+      exit 73
+    fi
+  done
+fi
+if host_detected codex codex "$codex_home"; then
+  preflight_skill_tree "$codex_home"
+fi
+
+cli_source="$product_root/build/cli/bundle/bin/worklog"
+[[ -f "$cli_source" ]] || cli_source="$product_root/build/cli/bundle/bin/worklog.exe"
+if [[ ! -f "$cli_source" ]]; then
+  echo "Required precompiled Core CLI is missing." >&2
+  exit 66
+fi
+cli_name="$(basename "$cli_source")"
+
+install_parent="$(dirname "$install_root")"
+mkdir -p "$install_parent"
+candidate="$(mktemp -d "$install_parent/.under-claw-install.XXXXXX")"
+if [[ -d "$install_root" ]]; then
+  cp -R "$install_root/." "$candidate/"
+fi
+mkdir -p "$candidate/bin"
+rm -f "$candidate/bin/worklog" "$candidate/bin/worklog.exe"
+install -m 0755 "$cli_source" "$candidate/bin/$cli_name"
+if [[ -d "$product_root/build/cli/bundle/lib" ]]; then
+  rm -rf "$candidate/lib"
+  cp -R "$product_root/build/cli/bundle/lib" "$candidate/lib"
+fi
+if [[ "$packaged" == "1" ]]; then
+  for directory in app packaging bundled-skills skills; do
+    rm -rf "$candidate/$directory"
+    cp -RL "$product_root/$directory" "$candidate/$directory"
+  done
+  for file in UNSIGNED-NOTICE.txt ACCEPTED-RUNTIMES.txt RELEASE-VERSION.txt \
+    README.txt release-manifest.tsv; do
+    cp "$product_root/$file" "$candidate/$file"
+  done
+fi
 
 {
   echo "manifest_version	2"
   echo "install_root	$install_root"
   echo "skill_revision	$revision"
-} > "$manifest"
+} > "$candidate/install-manifest.tsv"
+
+if [[ "$packaged" == "1" &&
+  ! -f "$candidate/app/.under-claw-app-health" ]]; then
+  echo "Packaged application health marker is missing" >&2
+  exit 70
+fi
+if ! UNDER_CLAW_WORK_HOME="$candidate" \
+  "$candidate/bin/$cli_name" --help >/dev/null 2>&1; then
+  echo "Installed CLI failed health check; installation preserved" >&2
+  exit 70
+fi
 
 install_skill_tree() {
   local host="$1"
@@ -97,7 +192,7 @@ install_skill_tree() {
     local target="$skill_root/$skill"
     if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
       echo "Refusing to overwrite non-owned skill: $target" >&2
-      exit 73
+      return 73
     fi
   done
 
@@ -126,7 +221,7 @@ install_claude_commands() {
     local target="$command_root/$skill.md"
     if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
       echo "Refusing to overwrite non-owned command: $target" >&2
-      exit 73
+      return 73
     fi
     cp "$source" "$target"
     touch "$target.under-claw-work-owned"
@@ -135,31 +230,103 @@ install_claude_commands() {
   local target="$command_root/under-claw-work-plan.md"
   if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
     echo "Refusing to overwrite non-owned command: $target" >&2
-    exit 73
+    return 73
   fi
   cp "$product_root/skills/under-claw-work-plan/SKILL.md" "$target"
   touch "$target.under-claw-work-owned"
   echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
 }
 
+host_snapshot="$staging/host-snapshot"
+host_snapshot_index="$staging/host-snapshot.tsv"
+mkdir -p "$host_snapshot"
+snapshot_count=0
+snapshot_target() {
+  local target="$1"
+  local saved="$host_snapshot/$snapshot_count"
+  snapshot_count=$((snapshot_count + 1))
+  if [[ -e "$target" || -L "$target" ]]; then
+    cp -RP "$target" "$saved"
+    printf '%s\t%s\t1\n' "$target" "$saved" >> "$host_snapshot_index"
+  else
+    printf '%s\t%s\t0\n' "$target" "$saved" >> "$host_snapshot_index"
+  fi
+}
+snapshot_skill_tree() {
+  local host_home="$1"
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
+    under-claw-jarvis-plan under-claw-work-plan; do
+    snapshot_target "$host_home/skills/$skill"
+  done
+}
+if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
+  host_detected hermes hermes "$hermes_home"; then
+  snapshot_skill_tree "$hermes_home"
+fi
+if host_detected claude-code claude "$claude_home"; then
+  snapshot_skill_tree "$claude_home"
+  for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
+    under-claw-jarvis-plan under-claw-work-plan; do
+    snapshot_target "$claude_home/commands/$skill.md"
+    snapshot_target "$claude_home/commands/$skill.md.under-claw-work-owned"
+  done
+fi
+if host_detected codex codex "$codex_home"; then
+  snapshot_skill_tree "$codex_home"
+fi
+
+rollback_install_and_hosts() {
+  local status=$?
+  trap - ERR
+  set +e
+  if [[ -f "$host_snapshot_index" ]]; then
+    while IFS=$'\t' read -r target saved existed; do
+      rm -rf "$target"
+      if [[ "$existed" == "1" ]]; then
+        mkdir -p "$(dirname "$target")"
+        cp -RP "$saved" "$target"
+      fi
+    done < "$host_snapshot_index"
+  fi
+  rm -rf "$install_root"
+  if [[ "$had_install" == "1" && -d "$backup" ]]; then
+    mv "$backup" "$install_root"
+  fi
+  echo "Agent host installation failed; all installation targets restored" >&2
+  exit "$status"
+}
+
+had_install=0
+if [[ -e "$install_root" ]]; then
+  had_install=1
+  backup="$install_parent/.under-claw-install-backup.$$"
+  mv "$install_root" "$backup"
+fi
+if ! mv "$candidate" "$install_root"; then
+  [[ "$had_install" == "0" ]] || mv "$backup" "$install_root"
+  echo "Install swap failed; previous installation restored" >&2
+  exit 71
+fi
+candidate=""
+trap rollback_install_and_hosts ERR
+
 connected=0
-hermes_home="${HERMES_HOME:-$HOME/.hermes}"
 if [[ "${UNDER_CLAW_EXPERIMENTAL_HERMES:-0}" == "1" ]] &&
   host_detected hermes hermes "$hermes_home"; then
   install_skill_tree hermes "$hermes_home"
   connected=$((connected + 1))
 fi
-claude_home="${CLAUDE_HOME:-$HOME/.claude}"
 if host_detected claude-code claude "$claude_home"; then
   install_skill_tree claude-code "$claude_home"
   install_claude_commands "$claude_home"
   connected=$((connected + 1))
 fi
-codex_home="${CODEX_HOME:-$HOME/.codex}"
 if host_detected codex codex "$codex_home"; then
   install_skill_tree codex "$codex_home"
   connected=$((connected + 1))
 fi
+trap - ERR
+if [[ "$had_install" == "1" && -d "$backup" ]]; then rm -rf "$backup"; fi
 
 echo "Under Claw Work runtime installed: $install_root"
 if [[ "$connected" -eq 0 ]]; then
@@ -167,4 +334,4 @@ if [[ "$connected" -eq 0 ]]; then
 else
   echo "Connected Agent hosts: $connected"
 fi
-echo "Next: $install_root/bin/worklog initialize <git-path> <environment-name> [remote]"
+echo "Next: $install_root/bin/$cli_name initialize <git-path> <environment-name> [remote]"

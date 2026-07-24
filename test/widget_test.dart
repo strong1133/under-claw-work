@@ -46,6 +46,38 @@ void main() {
     expect(find.text('Durable shared context'), findsOneWidget);
   });
 
+  testWidgets('GUI exposes canonical sync and verified Meta generation', (
+    tester,
+  ) async {
+    final temporary = Directory.systemTemp.createTempSync('under-claw-widget-');
+    addTearDown(() => temporary.deleteSync(recursive: true));
+    final workspace = Workspace(temporary)..ensureLayout();
+    TaskRepository(workspace).create(
+      const WorkTask(
+        id: 'TSK-runtime-ui',
+        domainId: 'DOM-example',
+        milestoneId: 'MLS-example',
+        title: 'Runtime task',
+        status: TaskStatus.draft,
+        promptDraft: 'Draft',
+        promptMeta: '',
+        promptDraftRevision: 1,
+        promptMetaSourceRevision: 0,
+        approval: PromptApproval.missing,
+        autoDeriveTasks: false,
+        targetEnvironment: 'ENV-local',
+      ),
+    );
+
+    await tester.pumpWidget(UnderClawWorkApp(workspaceOverride: temporary));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('git-sync-now')), findsOneWidget);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('generate-meta')), findsOneWidget);
+  });
+
   testWidgets('GUI shows pending control and supports withdrawal', (
     tester,
   ) async {
@@ -79,6 +111,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('start · pending'), findsOneWidget);
+    expect(find.textContaining('pipeline pending'), findsOneWidget);
     await tester.ensureVisible(find.text('Withdraw request'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Withdraw request'));
