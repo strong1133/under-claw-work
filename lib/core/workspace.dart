@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'workspace_file_system.dart';
+
 class Workspace {
   Workspace(this.root);
 
@@ -11,6 +13,15 @@ class Workspace {
   Directory get tasks => Directory(p.join(workdb.path, 'tasks'));
   Directory get domains => Directory(p.join(workdb.path, 'domains'));
   Directory get milestones => Directory(p.join(workdb.path, 'milestones'));
+  Directory get projects => Directory(p.join(workdb.path, 'projects'));
+  Directory get repositories => Directory(p.join(workdb.path, 'repositories'));
+  Directory get personas => Directory(p.join(workdb.path, 'personas'));
+  Directory get agentGroups => Directory(p.join(workdb.path, 'agent-groups'));
+  Directory get channelBindings =>
+      Directory(p.join(workdb.path, 'channel-bindings'));
+  Directory get mcpBindings => Directory(p.join(workdb.path, 'mcp-bindings'));
+  Directory get skillPolicies =>
+      Directory(p.join(workdb.path, 'skill-policies'));
   Directory get objectives => Directory(p.join(workdb.path, 'objectives'));
   Directory get knowledge => Directory(p.join(workdb.path, 'knowledge'));
   Directory get references => Directory(p.join(workdb.path, 'references'));
@@ -36,6 +47,13 @@ class Workspace {
       tasks,
       domains,
       milestones,
+      projects,
+      repositories,
+      personas,
+      agentGroups,
+      channelBindings,
+      mcpBindings,
+      skillPolicies,
       objectives,
       knowledge,
       references,
@@ -51,7 +69,7 @@ class Workspace {
       local,
       migrations,
     ]) {
-      directory.createSync(recursive: true);
+      WorkspaceFileSystem.ensureDirectory(root, directory);
     }
   }
 }

@@ -8,7 +8,9 @@ import 'git_sync_service.dart';
 import 'id.dart';
 import 'models.dart';
 import 'projection.dart';
+import 'scope_context_resolver.dart';
 import 'skill_pipeline.dart';
+import 'task_codec.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
 
@@ -164,10 +166,24 @@ class TaskExecutionWorker {
         ttl: claimTtl,
       );
       faultInjector?.call(WorkerStartStage.localClaimAcquired);
-      _updateRun(repository, runId, 'running', {
+      final runBeforeStart = repository.get(EntityKind.run, runId)!;
+      final runFields = <String, Object?>{
         'worker_environment_id': environmentId,
         'worker_started_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      };
+      if (runBeforeStart.data['scope_context_snapshot'] == null) {
+        withRunScopeContextSnapshot(
+          workspace,
+          domainId: task.domainId,
+          milestoneId: task.milestoneId,
+          persist: (snapshot) => _updateRun(repository, runId, 'running', {
+            ...runFields,
+            'scope_context_snapshot': snapshot,
+          }),
+        );
+      } else {
+        _updateRun(repository, runId, 'running', runFields);
+      }
       faultInjector?.call(WorkerStartStage.runMarkedRunning);
       taskRepository.update(task.copyWith(status: TaskStatus.running));
       faultInjector?.call(WorkerStartStage.taskMarkedRunning);
@@ -181,7 +197,6 @@ class TaskExecutionWorker {
         );
       }
       startCommitted = true;
-      projection.rebuild();
     } on Object catch (error) {
       if (!startCommitted) {
         await _compensateStart(
@@ -211,6 +226,7 @@ class TaskExecutionWorker {
     var paused = false;
     var pipelineFinished = false;
     Object? controlFailure;
+    var controlFuture = Future<void>.value();
     Future<void> requireCurrentFence() async {
       final lease = remoteLease;
       if (lease != null && !await remoteClaims!.isCurrent(lease)) {
@@ -218,46 +234,54 @@ class TaskExecutionWorker {
       }
     }
 
-    _createRunEventOnce(repository, runId, 'runner_invocation_started');
-    projection.rebuild();
-    await requireCurrentFence();
-    await gitSync?.publishWorkerChanges(
-      operationId: request.data['operation_id'] as String,
-    );
-    // Close the short-task window: prove ownership immediately before the
-    // adapter starts, not only at the first periodic heartbeat.
-    await requireCurrentFence();
-    final pipelineFuture = SkillPipeline(
-      projection,
-      runner,
-      environmentId: environmentId,
-      manageClaim: false,
-      beforeCanonicalWrite: requireCurrentFence,
-    ).execute(task, runId).whenComplete(() => pipelineFinished = true);
-    final controlFuture =
-        () async {
-          while (!pipelineFinished) {
-            await Future<void>.delayed(heartbeatInterval);
-            if (pipelineFinished) break;
-            claims.heartbeat(claim!.id, ttl: claimTtl);
-            // The remote OID is the ownership token. We intentionally keep it
-            // stable while canonical writes are in flight; wall-clock renewal
-            // would rotate the token concurrently and fence the owner itself.
-            await requireCurrentFence();
-            final state = await _consumePendingControls(runId, paused: paused);
-            cancelled = cancelled || state.cancelled;
-            paused = state.paused;
-            if (state.processed) {
-              await requireCurrentFence();
-              await gitSync?.publishWorkerChanges(
-                operationId: request.data['operation_id'] as String,
-              );
-            }
-          }
-        }().catchError((Object error) {
-          controlFailure = error;
-        });
     try {
+      // Once the immutable acceptance disposition exists, every remaining
+      // operation belongs to the owned runner phase so its finally block
+      // releases both local and remote ownership even if projection rebuild
+      // fails before the adapter starts.
+      projection.rebuild();
+      _createRunEventOnce(repository, runId, 'runner_invocation_started');
+      projection.rebuild();
+      await requireCurrentFence();
+      await gitSync?.publishWorkerChanges(
+        operationId: request.data['operation_id'] as String,
+      );
+      // Close the short-task window: prove ownership immediately before the
+      // adapter starts, not only at the first periodic heartbeat.
+      await requireCurrentFence();
+      final pipelineFuture = SkillPipeline(
+        projection,
+        runner,
+        environmentId: environmentId,
+        manageClaim: false,
+        beforeCanonicalWrite: requireCurrentFence,
+      ).execute(task, runId).whenComplete(() => pipelineFinished = true);
+      controlFuture =
+          () async {
+            while (!pipelineFinished) {
+              await Future<void>.delayed(heartbeatInterval);
+              if (pipelineFinished) break;
+              claims.heartbeat(claim!.id, ttl: claimTtl);
+              // The remote OID is the ownership token. We intentionally keep it
+              // stable while canonical writes are in flight; wall-clock renewal
+              // would rotate the token concurrently and fence the owner itself.
+              await requireCurrentFence();
+              final state = await _consumePendingControls(
+                runId,
+                paused: paused,
+              );
+              cancelled = cancelled || state.cancelled;
+              paused = state.paused;
+              if (state.processed) {
+                await requireCurrentFence();
+                await gitSync?.publishWorkerChanges(
+                  operationId: request.data['operation_id'] as String,
+                );
+              }
+            }
+          }().catchError((Object error) {
+            controlFailure = error;
+          });
       await pipelineFuture;
       await controlFuture;
       if (controlFailure != null) throw controlFailure!;
@@ -313,9 +337,51 @@ class TaskExecutionWorker {
       return WorkerRunResult(runId, 'failed', error: error.toString());
     } finally {
       pipelineFinished = true;
-      final current = repository.get(EntityKind.claim, claim.id);
-      if (current?.data['status'] == 'active') claims.release(claim.id);
-      if (remoteLease != null) await remoteClaims?.release(remoteLease);
+      Object? cleanupFailure;
+      StackTrace? cleanupStackTrace;
+      try {
+        final current = repository.get(EntityKind.claim, claim.id);
+        if (current?.data['status'] == 'active') claims.release(claim.id);
+      } on Object catch (error, stackTrace) {
+        cleanupFailure = error;
+        cleanupStackTrace = stackTrace;
+      }
+      try {
+        if (remoteLease != null &&
+            await remoteClaims?.release(remoteLease) != true) {
+          throw StateError('REMOTE_RELEASE_NOT_ACKNOWLEDGED');
+        }
+      } on Object catch (error, stackTrace) {
+        cleanupFailure ??= error;
+        cleanupStackTrace ??= stackTrace;
+      }
+      if (cleanupFailure != null) {
+        try {
+          final eventId = newId('EVT');
+          repository.create(
+            CanonicalEntity(
+              kind: EntityKind.event,
+              id: eventId,
+              data: {
+                'schema_version': 1,
+                'id': eventId,
+                'type': 'event',
+                'event_type': 'ownership_cleanup_failed',
+                'run_id': runId,
+                'failure_type': cleanupFailure.runtimeType.toString(),
+                'occurred_at': DateTime.now().toUtc().toIso8601String(),
+              },
+            ),
+          );
+          projection.rebuild();
+        } on Object {
+          // Preserve the first cleanup failure after both releases were tried.
+        }
+        Error.throwWithStackTrace(
+          cleanupFailure,
+          cleanupStackTrace ?? StackTrace.current,
+        );
+      }
     }
   }
 
@@ -601,13 +667,41 @@ class TaskExecutionWorker {
     required String requestId,
     required Object error,
   }) async {
-    repository.update(priorRun);
-    tasks.update(priorTask);
-    if (claim != null) {
-      final current = repository.get(EntityKind.claim, claim.id);
-      if (current?.data['status'] == 'active') claims.release(claim.id);
-    }
     var remoteReleasePending = false;
+    Object? compensationFailure;
+    StackTrace? compensationStackTrace;
+    try {
+      final currentRun = repository.get(EntityKind.run, priorRun.id);
+      final snapshot = currentRun?.data['scope_context_snapshot'];
+      repository.update(
+        snapshot == null
+            ? priorRun
+            : CanonicalEntity(
+                kind: priorRun.kind,
+                id: priorRun.id,
+                data: {...priorRun.data, 'scope_context_snapshot': snapshot},
+                body: priorRun.body,
+              ),
+      );
+      final currentTask = tasks.get(priorTask.id);
+      if (currentTask == null ||
+          TaskCodec.encode(currentTask) != TaskCodec.encode(priorTask)) {
+        tasks.update(priorTask);
+      }
+    } on Object catch (failure, stackTrace) {
+      compensationFailure = failure;
+      compensationStackTrace = stackTrace;
+    } finally {
+      try {
+        if (claim != null) {
+          final current = repository.get(EntityKind.claim, claim.id);
+          if (current?.data['status'] == 'active') claims.release(claim.id);
+        }
+      } on Object catch (failure, stackTrace) {
+        compensationFailure ??= failure;
+        compensationStackTrace ??= stackTrace;
+      }
+    }
     if (remoteLease != null) {
       try {
         remoteReleasePending = await remoteClaims?.release(remoteLease) != true;
@@ -627,12 +721,21 @@ class TaskExecutionWorker {
           'event_type': 'start_compensated',
           'request_id': requestId,
           'failure_type': error.runtimeType.toString(),
+          if (compensationFailure != null)
+            'compensation_failure_type': compensationFailure.runtimeType
+                .toString(),
           'remote_release_pending': remoteReleasePending,
           'occurred_at': DateTime.now().toUtc().toIso8601String(),
         },
       ),
     );
     projection.rebuild();
+    if (compensationFailure != null) {
+      Error.throwWithStackTrace(
+        compensationFailure,
+        compensationStackTrace ?? StackTrace.current,
+      );
+    }
   }
 
   void _setTaskAndRunStatus(String taskId, String runId, TaskStatus status) {

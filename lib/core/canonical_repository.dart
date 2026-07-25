@@ -3,14 +3,21 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
-
-import 'workspace.dart';
-import 'workspace_mutation_lock.dart';
 import 'schema_validator.dart';
+import 'workspace.dart';
+import 'workspace_file_system.dart';
+import 'workspace_mutation_lock.dart';
 
 enum EntityKind {
   domain('DOM', 'domain'),
   milestone('MLS', 'milestone'),
+  project('PRJ', 'project'),
+  repository('REP', 'repository'),
+  persona('PER', 'persona'),
+  agentGroup('AGG', 'agent_group'),
+  channelBinding('CHB', 'channel_binding'),
+  mcpBinding('MCB', 'mcp_binding'),
+  skillPolicy('SKP', 'skill_policy'),
   objective('OBJ', 'objective'),
   task('TSK', 'task'),
   knowledge('KNW', 'knowledge'),
@@ -42,6 +49,29 @@ class CanonicalEntity {
   final String body;
 }
 
+class CanonicalEntityScope {
+  const CanonicalEntityScope({
+    required this.domainIds,
+    required this.milestoneIds,
+    required this.taskIds,
+  });
+
+  final Set<String> domainIds;
+  final Set<String> milestoneIds;
+  final Set<String> taskIds;
+
+  bool permitsTask({
+    required String domainId,
+    required String milestoneId,
+    required String taskId,
+  }) {
+    if (taskIds.isNotEmpty) return taskIds.contains(taskId);
+    if (milestoneIds.isNotEmpty) return milestoneIds.contains(milestoneId);
+    if (domainIds.isNotEmpty) return domainIds.contains(domainId);
+    return true;
+  }
+}
+
 class CanonicalRepository {
   CanonicalRepository(this.workspace);
 
@@ -54,9 +84,11 @@ class CanonicalRepository {
     validate(entity);
     WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
-    file.parent.createSync(recursive: true);
-    file.createSync(exclusive: true);
-    file.writeAsStringSync(_encode(entity), flush: true);
+    WorkspaceFileSystem.createTextExclusive(
+      workspace.root,
+      file,
+      _encode(entity),
+    );
     return entity;
   }
 
@@ -67,15 +99,24 @@ class CanonicalRepository {
     validate(entity);
     WorklogContractValidator().validateEntity(entity);
     final file = fileFor(entity.kind, entity.id);
-    if (!file.existsSync()) {
+    if (!WorkspaceFileSystem.regularFileExists(workspace.root, file)) {
       throw StateError('Entity does not exist: ${entity.id}');
     }
     if (_immutableKinds.contains(entity.kind)) {
       throw StateError('${entity.kind.type} is immutable.');
     }
-    final temporary = File('${file.path}.tmp');
-    temporary.writeAsStringSync(_encode(entity), flush: true);
-    temporary.renameSync(file.path);
+    if (entity.kind == EntityKind.run) {
+      final existing = _read(entity.kind, file);
+      final existingSnapshot = existing.data['scope_context_snapshot'];
+      if (existingSnapshot != null &&
+          !_deepEqual(
+            existingSnapshot,
+            entity.data['scope_context_snapshot'],
+          )) {
+        throw StateError('Run scope_context_snapshot is immutable.');
+      }
+    }
+    WorkspaceFileSystem.atomicWriteText(workspace.root, file, _encode(entity));
     return entity;
   }
 
@@ -90,27 +131,31 @@ class CanonicalRepository {
       throw StateError('${kind.type} is immutable.');
     }
     final file = fileFor(kind, id);
-    if (!file.existsSync()) {
+    if (!WorkspaceFileSystem.regularFileExists(workspace.root, file)) {
       throw StateError('Entity does not exist: $id');
     }
-    file.deleteSync();
+    WorkspaceFileSystem.deleteFile(workspace.root, file);
   }
 
   CanonicalEntity? get(EntityKind kind, String id) {
     final file = fileFor(kind, id);
-    return file.existsSync() ? _read(kind, file) : null;
+    return WorkspaceFileSystem.regularFileExists(workspace.root, file)
+        ? _read(kind, file)
+        : null;
   }
 
-  bool exists(EntityKind kind, String id) => fileFor(kind, id).existsSync();
+  bool exists(EntityKind kind, String id) =>
+      WorkspaceFileSystem.regularFileExists(workspace.root, fileFor(kind, id));
 
   List<CanonicalEntity> list([EntityKind? only]) {
     final kinds = only == null ? EntityKind.values : [only];
     final entities = <CanonicalEntity>[];
     for (final kind in kinds) {
       final directory = _directory(kind);
-      if (!directory.existsSync()) continue;
-      for (final file
-          in directory.listSync(recursive: true).whereType<File>()) {
+      for (final file in WorkspaceFileSystem.listFiles(
+        workspace.root,
+        directory,
+      )) {
         if (_isCanonicalFile(kind, file)) {
           entities.add(_read(kind, file));
         }
@@ -121,11 +166,7 @@ class CanonicalRepository {
   }
 
   void validate(CanonicalEntity entity) {
-    if (!entity.id.startsWith('${entity.kind.prefix}-')) {
-      throw FormatException(
-        '${entity.kind.type} id must start with ${entity.kind.prefix}-',
-      );
-    }
+    _validateId(entity.kind, entity.id);
     if (entity.data['id'] != entity.id) {
       throw FormatException('Entity id and document id differ.');
     }
@@ -137,6 +178,7 @@ class CanonicalRepository {
   }
 
   File fileFor(EntityKind kind, String id) {
+    _validateId(kind, id);
     if (kind == EntityKind.domain) {
       return File(p.join(workspace.domains.path, id, 'domain.md'));
     }
@@ -166,6 +208,15 @@ class CanonicalRepository {
     add(EntityKind.objective, entity.data['objective_ids']);
     add(EntityKind.knowledge, entity.data['knowledge_ids']);
     add(EntityKind.reference, entity.data['reference_ids']);
+    add(EntityKind.repository, entity.data['repository_ids']);
+    add(EntityKind.persona, entity.data['persona_id']);
+    add(EntityKind.agentGroup, entity.data['agent_group_id']);
+    final roles = entity.data['roles'];
+    if (roles is List) {
+      for (final role in roles.whereType<Map>()) {
+        add(EntityKind.persona, role['persona_id']);
+      }
+    }
     final scope = entity.data['scope'];
     if (scope is Map) {
       add(EntityKind.domain, scope['domain_id']);
@@ -175,6 +226,17 @@ class CanonicalRepository {
       add(EntityKind.task, scope['task_ids']);
       add(EntityKind.run, scope['run_ids']);
     }
+    final knowledgeRelations = entity.data['relations'];
+    if (entity.kind == EntityKind.knowledge && knowledgeRelations is Map) {
+      for (final relation in const [
+        'supports',
+        'contradicts',
+        'derived_from',
+        'supersedes',
+      ]) {
+        add(EntityKind.knowledge, knowledgeRelations[relation]);
+      }
+    }
     for (final reference in references) {
       if (reference.$2 == entity.id) continue;
       if (!exists(reference.$1, reference.$2)) {
@@ -183,13 +245,150 @@ class CanonicalRepository {
         );
       }
     }
+    final entityScope = scopeOf(entity);
+    if (entity.kind != EntityKind.milestone) {
+      for (final milestoneId in entityScope.milestoneIds) {
+        final milestone = get(EntityKind.milestone, milestoneId);
+        if (milestone == null ||
+            (entityScope.domainIds.isNotEmpty &&
+                !entityScope.domainIds.contains(milestone.data['domain_id']))) {
+          throw FormatException(
+            '${entity.id} uses a Milestone outside its Domain scope.',
+          );
+        }
+      }
+    }
+    if (entity.kind == EntityKind.channelBinding) {
+      final agentGroupId = entity.data['agent_group_id'];
+      if (agentGroupId is String) {
+        _validateScopeReference(entity, EntityKind.agentGroup, agentGroupId);
+      }
+    }
+    if (entity.kind == EntityKind.agentGroup && roles is List) {
+      for (final role in roles.whereType<Map>()) {
+        final personaId = role['persona_id'];
+        if (personaId is String) {
+          _validateScopeReference(entity, EntityKind.persona, personaId);
+        }
+      }
+    }
+    if (entity.kind == EntityKind.knowledge && knowledgeRelations is Map) {
+      for (final relation in const [
+        'supports',
+        'contradicts',
+        'derived_from',
+        'supersedes',
+      ]) {
+        final targets = knowledgeRelations[relation];
+        if (targets is List) {
+          for (final targetId in targets.whereType<String>()) {
+            _validateScopeReference(entity, EntityKind.knowledge, targetId);
+          }
+        }
+      }
+    }
+  }
+
+  void _validateId(EntityKind kind, String id) {
+    final validId = RegExp(
+      '^${RegExp.escape(kind.prefix)}-[A-Za-z0-9][A-Za-z0-9_-]*\$',
+    );
+    if (!validId.hasMatch(id)) {
+      throw FormatException(
+        '${kind.type} id must use ${kind.prefix}- followed by letters, digits, '
+        'underscores, or hyphens.',
+      );
+    }
+  }
+
+  void _validateScopeReference(
+    CanonicalEntity source,
+    EntityKind targetKind,
+    String targetId,
+  ) {
+    final target = get(targetKind, targetId);
+    if (target == null) return;
+    final sourceScope = scopeOf(source);
+    final targetScope = scopeOf(target);
+    final domainMismatch =
+        targetScope.domainIds.isNotEmpty &&
+        (sourceScope.domainIds.isEmpty ||
+            !sourceScope.domainIds.every(targetScope.domainIds.contains));
+    final milestoneMismatch =
+        targetScope.milestoneIds.isNotEmpty &&
+        (sourceScope.milestoneIds.isEmpty ||
+            !sourceScope.milestoneIds.every(targetScope.milestoneIds.contains));
+    final taskMismatch =
+        targetScope.taskIds.isNotEmpty &&
+        (sourceScope.taskIds.isEmpty ||
+            !sourceScope.taskIds.every(targetScope.taskIds.contains));
+    if (domainMismatch || milestoneMismatch || taskMismatch) {
+      throw FormatException(
+        '${source.id} cannot reference out-of-scope $targetId.',
+      );
+    }
+  }
+
+  CanonicalEntityScope scopeOf(CanonicalEntity entity) {
+    final domainIds = <String>{};
+    final milestoneIds = <String>{};
+    final taskIds = <String>{};
+    _addScopeValues(entity.data, 'domain', domainIds);
+    _addScopeValues(entity.data, 'milestone', milestoneIds);
+    _addScopeValues(entity.data, 'task', taskIds);
+    final scope = entity.data['scope'];
+    if (scope is Map) {
+      _addScopeValues(scope, 'domain', domainIds);
+      _addScopeValues(scope, 'milestone', milestoneIds);
+      _addScopeValues(scope, 'task', taskIds);
+    }
+    if (entity.kind == EntityKind.domain) domainIds.add(entity.id);
+    if (entity.kind == EntityKind.milestone) milestoneIds.add(entity.id);
+    return CanonicalEntityScope(
+      domainIds: Set.unmodifiable(domainIds),
+      milestoneIds: Set.unmodifiable(milestoneIds),
+      taskIds: Set.unmodifiable(taskIds),
+    );
+  }
+
+  void _addScopeValues(Map values, String name, Set<String> result) {
+    final singularKey = '${name}_id';
+    final pluralKey = '${name}_ids';
+    if (values.containsKey(singularKey)) {
+      final value = values[singularKey];
+      if (value is! String || value.isEmpty) {
+        throw FormatException('$singularKey must be a non-empty string.');
+      }
+      result.add(value);
+    }
+    if (values.containsKey(pluralKey)) {
+      final value = values[pluralKey];
+      if (value is! List ||
+          value.any((item) => item is! String || item.isEmpty)) {
+        throw FormatException('$pluralKey must contain non-empty strings.');
+      }
+      result.addAll(value.cast<String>());
+    }
   }
 
   CanonicalEntity _read(EntityKind kind, File file) {
-    final content = file.readAsStringSync();
+    final content = WorkspaceFileSystem.readText(workspace.root, file);
     final parsed = _decode(content);
     final id = parsed.$1['id'];
     if (id is! String) throw FormatException('Missing id in ${file.path}.');
+    final expectedId = switch (kind) {
+      EntityKind.domain || EntityKind.milestone => p.basename(file.parent.path),
+      EntityKind.task =>
+        p.basename(file.path) == 'task.yaml'
+            ? p.basename(file.parent.path)
+            : p.basenameWithoutExtension(file.path),
+      _ => p.basenameWithoutExtension(file.path),
+    };
+    if (id != expectedId) {
+      throw FormatException(
+        'Document id $id differs from canonical path id $expectedId.',
+      );
+    }
     final entity = CanonicalEntity(
       kind: kind,
       id: id,
@@ -197,24 +396,43 @@ class CanonicalRepository {
       body: parsed.$2,
     );
     validate(entity);
+    if (kind != EntityKind.task) {
+      WorklogContractValidator().validateEntity(entity);
+    }
     return entity;
   }
 
   Map<String, Object?> readLoose(File file) {
-    final parsed = _decode(file.readAsStringSync());
+    final parsed = _decode(WorkspaceFileSystem.readText(workspace.root, file));
     return parsed.$1;
   }
 
   bool _isCanonicalFile(EntityKind kind, File file) {
     final name = p.basename(file.path);
-    return switch (kind) {
-      EntityKind.domain => name == 'domain.md',
-      EntityKind.milestone => name == 'milestone.md',
-      EntityKind.task => name == 'task.yaml' || name.startsWith('TSK-'),
-      _ =>
-        name.startsWith('${kind.prefix}-') &&
-            (name.endsWith('.yaml') || name.endsWith('.md')),
+    final id = switch (kind) {
+      EntityKind.domain when name == 'domain.md' => p.basename(
+        file.parent.path,
+      ),
+      EntityKind.milestone when name == 'milestone.md' => p.basename(
+        file.parent.path,
+      ),
+      EntityKind.task when name == 'task.yaml' => p.basename(file.parent.path),
+      EntityKind.task when name.endsWith('.yaml') => p.basenameWithoutExtension(
+        name,
+      ),
+      _ when name.endsWith(_markdownKinds.contains(kind) ? '.md' : '.yaml') =>
+        p.basenameWithoutExtension(name),
+      _ => null,
     };
+    if (id == null) return false;
+    try {
+      return p.equals(
+        p.normalize(file.absolute.path),
+        p.normalize(fileFor(kind, id).absolute.path),
+      );
+    } on FormatException {
+      return false;
+    }
   }
 
   (Map<String, Object?>, String) _decode(String content) {
@@ -253,6 +471,13 @@ class CanonicalRepository {
   Directory _directory(EntityKind kind) => switch (kind) {
     EntityKind.domain => workspace.domains,
     EntityKind.milestone => workspace.milestones,
+    EntityKind.project => workspace.projects,
+    EntityKind.repository => workspace.repositories,
+    EntityKind.persona => workspace.personas,
+    EntityKind.agentGroup => workspace.agentGroups,
+    EntityKind.channelBinding => workspace.channelBindings,
+    EntityKind.mcpBinding => workspace.mcpBindings,
+    EntityKind.skillPolicy => workspace.skillPolicies,
     EntityKind.objective => workspace.objectives,
     EntityKind.task => workspace.tasks,
     EntityKind.knowledge => workspace.knowledge,
@@ -269,6 +494,13 @@ class CanonicalRepository {
   static const _markdownKinds = {
     EntityKind.domain,
     EntityKind.milestone,
+    EntityKind.project,
+    EntityKind.repository,
+    EntityKind.persona,
+    EntityKind.agentGroup,
+    EntityKind.channelBinding,
+    EntityKind.mcpBinding,
+    EntityKind.skillPolicy,
     EntityKind.objective,
     EntityKind.knowledge,
     EntityKind.reference,
@@ -280,4 +512,26 @@ class CanonicalRepository {
     EntityKind.controlRequest,
     EntityKind.controlDisposition,
   };
+
+  static bool _deepEqual(Object? left, Object? right) {
+    if (identical(left, right)) return true;
+    if (left is Map && right is Map) {
+      if (left.length != right.length) return false;
+      for (final entry in left.entries) {
+        if (!right.containsKey(entry.key) ||
+            !_deepEqual(entry.value, right[entry.key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var index = 0; index < left.length; index++) {
+        if (!_deepEqual(left[index], right[index])) return false;
+      }
+      return true;
+    }
+    return left == right;
+  }
 }

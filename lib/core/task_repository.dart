@@ -4,16 +4,19 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import 'canonical_repository.dart';
 import 'models.dart';
 import 'task_codec.dart';
 import 'workspace.dart';
+import 'workspace_file_system.dart';
 import 'workspace_mutation_lock.dart';
 import 'schema_validator.dart';
 
 class TaskRepository {
-  TaskRepository(this.workspace);
+  TaskRepository(this.workspace) : canonical = CanonicalRepository(workspace);
 
   final Workspace workspace;
+  final CanonicalRepository canonical;
 
   static String draftSha256(String draft) =>
       sha256.convert(utf8.encode(draft)).toString();
@@ -21,9 +24,7 @@ class TaskRepository {
   List<WorkTask> list() {
     workspace.ensureLayout();
     final files =
-        workspace.tasks
-            .listSync(recursive: true)
-            .whereType<File>()
+        WorkspaceFileSystem.listFiles(workspace.root, workspace.tasks)
             .where(
               (file) =>
                   p.basename(file.path) == 'task.yaml' ||
@@ -33,12 +34,27 @@ class TaskRepository {
             )
             .toList()
           ..sort((a, b) => a.path.compareTo(b.path));
-    return files.map(TaskCodec.read).toList();
+    return files.map((file) {
+      final task = TaskCodec.decode(
+        WorkspaceFileSystem.readText(workspace.root, file),
+      );
+      _validateFileIdentity(file, task);
+      _validateRead(task);
+      return task;
+    }).toList();
   }
 
   WorkTask? get(String id) {
     final file = _existingFile(id);
-    return file.existsSync() ? TaskCodec.read(file) : null;
+    if (!WorkspaceFileSystem.regularFileExists(workspace.root, file)) {
+      return null;
+    }
+    final task = TaskCodec.decode(
+      WorkspaceFileSystem.readText(workspace.root, file),
+    );
+    _validateFileIdentity(file, task, requestedId: id);
+    _validateRead(task);
+    return task;
   }
 
   WorkTask create(WorkTask task) =>
@@ -47,9 +63,11 @@ class TaskRepository {
   WorkTask _create(WorkTask task) {
     _validate(task);
     final file = _file(task.id);
-    file.parent.createSync(recursive: true);
-    file.createSync(exclusive: true);
-    file.writeAsStringSync(TaskCodec.encode(task), flush: true);
+    WorkspaceFileSystem.createTextExclusive(
+      workspace.root,
+      file,
+      TaskCodec.encode(task),
+    );
     return task;
   }
 
@@ -59,10 +77,14 @@ class TaskRepository {
   WorkTask _update(WorkTask task) {
     _validate(task);
     final file = _existingFile(task.id);
-    if (!file.existsSync()) throw StateError('Task does not exist: ${task.id}');
-    final temporary = File('${file.path}.tmp');
-    temporary.writeAsStringSync(TaskCodec.encode(task), flush: true);
-    temporary.renameSync(file.path);
+    if (!WorkspaceFileSystem.regularFileExists(workspace.root, file)) {
+      throw StateError('Task does not exist: ${task.id}');
+    }
+    WorkspaceFileSystem.atomicWriteText(
+      workspace.root,
+      file,
+      TaskCodec.encode(task),
+    );
     return task;
   }
 
@@ -94,7 +116,14 @@ class TaskRepository {
         'Only a Meta Prompt for the current Draft is approvable.',
       );
     }
-    return update(task.copyWith(approval: PromptApproval.approved));
+    return update(
+      task.copyWith(
+        approval: PromptApproval.approved,
+        status: task.status == TaskStatus.draft
+            ? TaskStatus.ready
+            : task.status,
+      ),
+    );
   }
 
   File canonicalFile(String id) => _existingFile(id);
@@ -122,22 +151,36 @@ class TaskRepository {
 
   void _delete(String id) {
     final file = _existingFile(id);
-    if (!file.existsSync()) throw StateError('Task does not exist: $id');
-    file.deleteSync();
+    if (!WorkspaceFileSystem.regularFileExists(workspace.root, file)) {
+      throw StateError('Task does not exist: $id');
+    }
+    WorkspaceFileSystem.deleteFile(workspace.root, file);
   }
 
-  File _file(String id) => File(p.join(workspace.tasks.path, id, 'task.yaml'));
+  File _file(String id) {
+    _validateTaskId(id);
+    return File(p.join(workspace.tasks.path, id, 'task.yaml'));
+  }
 
   File _existingFile(String id) {
     final nested = _file(id);
-    if (nested.existsSync()) return nested;
+    if (WorkspaceFileSystem.regularFileExists(workspace.root, nested)) {
+      return nested;
+    }
     return File(p.join(workspace.tasks.path, '$id.yaml'));
   }
 
-  void _validate(WorkTask task) {
-    WorklogContractValidator().validateTask(task);
-    if (!task.id.startsWith('TSK-') ||
-        !task.domainId.startsWith('DOM-') ||
+  void _validate(
+    WorkTask task, {
+    bool allowStaleApproval = false,
+    bool requireActiveScope = true,
+  }) {
+    WorklogContractValidator().validateTask(
+      task,
+      allowStaleApproval: allowStaleApproval,
+    );
+    _validateTaskId(task.id);
+    if (!task.domainId.startsWith('DOM-') ||
         !task.milestoneId.startsWith('MLS-') ||
         task.title.trim().isEmpty ||
         task.promptDraftRevision < 1 ||
@@ -159,8 +202,97 @@ class TaskRepository {
         'Automatically generated Tasks require a parent and Objective.',
       );
     }
-    if (task.approval == PromptApproval.approved && !task.isMetaCurrent) {
+    if (!allowStaleApproval &&
+        task.approval == PromptApproval.approved &&
+        !task.isMetaCurrent) {
       throw const FormatException('Approved Meta Prompt must be current.');
+    }
+    _validateScope(task, requireActive: requireActiveScope);
+    _validateContextRelations(
+      task,
+      EntityKind.objective,
+      task.alignedObjectiveIds,
+    );
+    _validateContextRelations(
+      task,
+      EntityKind.knowledge,
+      task.evidenceKnowledgeIds,
+    );
+    _validateContextRelations(
+      task,
+      EntityKind.reference,
+      task.sourceReferenceIds,
+    );
+  }
+
+  void _validateRead(WorkTask task) {
+    _validate(task, allowStaleApproval: true, requireActiveScope: false);
+  }
+
+  void _validateFileIdentity(File file, WorkTask task, {String? requestedId}) {
+    final name = p.basename(file.path);
+    final pathId = name == 'task.yaml'
+        ? p.basename(file.parent.path)
+        : p.basenameWithoutExtension(name);
+    final canonicalPath = _existingFile(task.id).absolute.path;
+    if (task.id != pathId ||
+        (requestedId != null && task.id != requestedId) ||
+        !p.equals(
+          p.normalize(file.absolute.path),
+          p.normalize(canonicalPath),
+        )) {
+      throw const FormatException(
+        'Task document id must match its canonical path id.',
+      );
+    }
+  }
+
+  void _validateScope(WorkTask task, {required bool requireActive}) {
+    final domain = canonical.get(EntityKind.domain, task.domainId);
+    final milestone = canonical.get(EntityKind.milestone, task.milestoneId);
+    if (domain == null && milestone == null) return;
+    if (domain == null ||
+        milestone == null ||
+        milestone.data['domain_id'] != task.domainId) {
+      throw const FormatException(
+        'Task Domain and Milestone must exist in one canonical scope.',
+      );
+    }
+    if (requireActive &&
+        (domain.data['status'] != 'active' ||
+            milestone.data['status'] != 'active')) {
+      throw const FormatException(
+        'Task Domain and Milestone must be active for mutation.',
+      );
+    }
+  }
+
+  void _validateContextRelations(
+    WorkTask task,
+    EntityKind kind,
+    List<String> ids,
+  ) {
+    for (final id in ids) {
+      final target = canonical.get(kind, id);
+      if (target == null) {
+        throw FormatException('${task.id} references missing $id.');
+      }
+      final scope = canonical.scopeOf(target);
+      if (!scope.permitsTask(
+        domainId: task.domainId,
+        milestoneId: task.milestoneId,
+        taskId: task.id,
+      )) {
+        throw FormatException('${task.id} references out-of-scope $id.');
+      }
+    }
+  }
+
+  void _validateTaskId(String id) {
+    if (!RegExp(r'^TSK-[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(id)) {
+      throw const FormatException(
+        'Task id must be a safe TSK- canonical path component.',
+      );
     }
   }
 }

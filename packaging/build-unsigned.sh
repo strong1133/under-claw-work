@@ -16,6 +16,16 @@ case "$os" in macos|windows|linux) ;; *) echo "--os must be macos, windows or li
 [[ "$output" = /* ]] || output="$root/$output"
 case "$output" in /|"$HOME"|"${HOME}/"|"") echo "Unsafe output path" >&2; exit 64 ;; esac
 
+head_revision="$(git -C "$root" rev-parse HEAD)"
+source_revision="${UNDER_CLAW_SOURCE_REVISION:-$head_revision}"
+[[ "$source_revision" == "$head_revision" ]] || {
+  echo "Source revision override must equal the checked-out HEAD" >&2; exit 65;
+}
+if [[ -n "$(git -C "$root" status --porcelain --untracked-files=all)" ]]; then
+  echo "Refusing to package an uncommitted source tree" >&2
+  exit 65
+fi
+
 stage="$(mktemp -d)"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
@@ -97,6 +107,7 @@ Inspect registrations with:
 EOF
 printf '%s\n' "${UNDER_CLAW_RELEASE_VERSION:-0.1.0-mvp}" \
   > "$release/RELEASE-VERSION.txt"
+printf '%s\n' "$source_revision" > "$release/SOURCE-REVISION.txt"
 cat > "$release/README.txt" <<EOF
 Under Claw Work unsigned $os package
 
@@ -123,6 +134,8 @@ checksum() {
         "$(wc -c < "$clean" | tr -d ' ')" "$clean"
     done > release-manifest.tsv
 )
+
+echo "release_manifest_sha256=$(checksum "$release/release-manifest.tsv")"
 
 mkdir -p "$output"
 archive="$output/under-claw-work-$os-unsigned.tar.gz"

@@ -106,6 +106,95 @@ reference_ids: [${graph.reference.id}]
     expect(pack.entries.single.truncated, isTrue);
     expect(pack.entries.single.entityType, 'domain');
   });
+
+  test('execution context excludes archived and sibling task Knowledge', () {
+    final graph = _seed(workspace, service);
+    final repository = CanonicalRepository(workspace);
+    TaskRepository(workspace).create(
+      WorkTask(
+        id: 'TSK-sibling',
+        domainId: graph.task.domainId,
+        milestoneId: graph.task.milestoneId,
+        title: 'Sibling',
+        status: TaskStatus.draft,
+        promptDraft: 'Draft',
+        promptMeta: '',
+        promptDraftRevision: 1,
+        promptMetaSourceRevision: 0,
+        approval: PromptApproval.missing,
+        autoDeriveTasks: false,
+        targetEnvironment: 'ENV-test',
+      ),
+    );
+    final archived = service.create(
+      kind: EntityKind.knowledge,
+      title: 'Archived direct evidence',
+      body: 'ARCHIVED-DIRECT-BODY',
+      domainId: graph.task.domainId,
+      milestoneId: graph.task.milestoneId,
+    );
+    repository.update(
+      CanonicalEntity(
+        kind: archived.kind,
+        id: archived.id,
+        data: {...archived.data, 'status': 'archived'},
+        body: archived.body,
+      ),
+    );
+    final sibling = service.create(
+      kind: EntityKind.knowledge,
+      title: 'Sibling task fact',
+      body: 'SIBLING-TASK-BODY',
+      domainId: graph.task.domainId,
+      milestoneId: graph.task.milestoneId,
+      taskId: 'TSK-sibling',
+    );
+    workspace.taskRelations(graph.task.id).writeAsStringSync('''
+knowledge_ids: [${archived.id}]
+''');
+
+    final execution = service.buildExecutionContext(graph.task.id);
+    final legacy = service.buildContext(graph.task.id);
+    expect(
+      execution.entries.map((entry) => entry.id),
+      isNot(contains(archived.id)),
+    );
+    expect(
+      execution.entries.map((entry) => entry.id),
+      isNot(contains(sibling.id)),
+    );
+    expect(
+      legacy.knowledge.map((entry) => entry.id),
+      isNot(contains(archived.id)),
+    );
+    expect(
+      legacy.knowledge.map((entry) => entry.id),
+      isNot(contains(sibling.id)),
+    );
+  });
+
+  test('execution context rejects archived scope anchors', () {
+    final graph = _seed(workspace, service);
+    final repository = CanonicalRepository(workspace);
+    final milestone = repository.get(
+      EntityKind.milestone,
+      graph.task.milestoneId,
+    )!;
+    repository.update(
+      CanonicalEntity(
+        kind: milestone.kind,
+        id: milestone.id,
+        data: {...milestone.data, 'status': 'archived'},
+        body: milestone.body,
+      ),
+    );
+
+    expect(
+      () => service.buildExecutionContext(graph.task.id),
+      throwsStateError,
+    );
+    expect(() => service.buildContext(graph.task.id), throwsStateError);
+  });
 }
 
 _Graph _seed(
@@ -145,6 +234,8 @@ _Graph _seed(
     kind: EntityKind.knowledge,
     title: 'Current fact',
     body: 'Current evidence',
+    domainId: domain.id,
+    milestoneId: milestone.id,
   );
   final reference = service.create(
     kind: EntityKind.reference,

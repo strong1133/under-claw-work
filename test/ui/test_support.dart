@@ -149,6 +149,8 @@ void _writeGraph(Workspace ws) {
       'id': 'DOM-mgmt',
       'type': 'domain',
       'name': 'Management console',
+      'title': 'Management console',
+      'status': 'active',
     }),
   );
   File(
@@ -162,6 +164,8 @@ void _writeGraph(Workspace ws) {
       'id': 'MLS-mgmt',
       'type': 'milestone',
       'name': 'Desktop experience',
+      'title': 'Desktop experience',
+      'status': 'active',
       'domain_id': 'DOM-mgmt',
     }),
   );

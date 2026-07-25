@@ -22,7 +22,13 @@ class ReleaseUpdateService {
   final Directory? windowsGitBashRoot;
   _GitBashTools? _gitBashToolsCache;
 
-  Future<ReleaseUpdateStatus> check(Directory release) async {
+  Future<ReleaseUpdateStatus> check(
+    Directory release,
+    String expectedManifestSha256,
+  ) async {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedManifestSha256)) {
+      throw const FormatException('A trusted manifest SHA-256 is required.');
+    }
     _requireAbsolute(release);
     final manifest = File(p.join(release.path, 'release-manifest.tsv'));
     final verifier = File(
@@ -34,16 +40,15 @@ class ReleaseUpdateService {
     final currentVersionFile = File(
       p.join(installRoot.path, 'RELEASE-VERSION.txt'),
     );
-    if (!manifest.existsSync() ||
-        !verifier.existsSync() ||
-        !candidateVersionFile.existsSync()) {
+    _requireTrustedInstalledFile(verifier);
+    if (!manifest.existsSync() || !candidateVersionFile.existsSync()) {
       throw StateError('Release or trusted installed verifier is incomplete.');
     }
     final verifierPath = await _bashPath(verifier.path);
     final releasePath = await _bashPath(release.path);
     final verified = await Process.run(
       await _bashExecutable(),
-      [verifierPath, releasePath],
+      [verifierPath, releasePath, expectedManifestSha256],
       environment: await _bashEnvironment(),
       includeParentEnvironment: false,
       runInShell: false,
@@ -59,9 +64,12 @@ class ReleaseUpdateService {
     );
   }
 
-  Future<String> apply(Directory release) async {
-    await check(release);
-    return _runInstalledHelper('update.sh', [release.path]);
+  Future<String> apply(Directory release, String expectedManifestSha256) async {
+    await check(release, expectedManifestSha256);
+    return _runInstalledHelper('update.sh', [
+      release.path,
+      expectedManifestSha256,
+    ]);
   }
 
   Future<String> rollback() => _runInstalledHelper('rollback.sh', const []);
@@ -71,9 +79,7 @@ class ReleaseUpdateService {
     List<String> arguments,
   ) async {
     final helper = File(p.join(installRoot.path, 'packaging', name));
-    if (!helper.existsSync()) {
-      throw StateError('Installed update helper is unavailable: $name');
-    }
+    _requireTrustedInstalledFile(helper);
     final helperPath = await _bashPath(helper.path);
     final bashArguments = <String>[];
     for (final argument in arguments) {
@@ -93,6 +99,21 @@ class ReleaseUpdateService {
       );
     }
     return result.stdout.toString().trim();
+  }
+
+  void _requireTrustedInstalledFile(File file) {
+    final packaging = Directory(p.join(installRoot.path, 'packaging'));
+    if (FileSystemEntity.typeSync(packaging.path, followLinks: false) !=
+            FileSystemEntityType.directory ||
+        FileSystemEntity.typeSync(file.path, followLinks: false) !=
+            FileSystemEntityType.file) {
+      throw StateError('Installed update helper is unavailable or unsafe.');
+    }
+    final root = installRoot.resolveSymbolicLinksSync();
+    final resolved = file.resolveSymbolicLinksSync();
+    if (!p.isWithin(root, resolved)) {
+      throw StateError('Installed update helper escapes the installation.');
+    }
   }
 
   Future<String> _bashPath(String value) async {

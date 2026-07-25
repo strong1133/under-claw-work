@@ -60,6 +60,16 @@ class ContextPackBuilder {
     }
     final task = tasks.get(taskId);
     if (task == null) throw StateError('Task does not exist: $taskId');
+    final domain = repository.get(EntityKind.domain, task.domainId);
+    final milestone = repository.get(EntityKind.milestone, task.milestoneId);
+    if (domain == null || domain.data['status'] != 'active') {
+      throw StateError('Task Domain is not active: ${task.domainId}');
+    }
+    if (milestone == null ||
+        milestone.data['status'] != 'active' ||
+        milestone.data['domain_id'] != task.domainId) {
+      throw StateError('Task Milestone is not active in its Domain.');
+    }
     final relations = workspace.taskRelations(task.id).existsSync()
         ? repository.readLoose(workspace.taskRelations(task.id))
         : const <String, Object?>{};
@@ -81,26 +91,26 @@ class ContextPackBuilder {
         updatedAt: '',
       ),
     ];
-    final domain = repository.get(EntityKind.domain, task.domainId);
-    final milestone = repository.get(EntityKind.milestone, task.milestoneId);
-    if (domain != null) {
-      candidates.add(_fromEntity(domain, 'task.domain', 0));
-    }
-    if (milestone != null) {
-      candidates.add(_fromEntity(milestone, 'task.milestone', 0));
-    }
+    candidates.add(_fromEntity(domain, 'task.domain', 0));
+    candidates.add(_fromEntity(milestone, 'task.milestone', 0));
 
     final graphEntities = [
       ...repository.list(EntityKind.objective),
       ...repository.list(EntityKind.knowledge),
       ...repository.list(EntityKind.reference),
-    ];
+    ].where((entity) => entity.data['status'] != 'archived').toList();
     final byId = {for (final entity in graphEntities) entity.id: entity};
     for (final entity in graphEntities) {
       // Execution context packs are assembled without an interactive auth
       // session, so restricted/secret material is never bundled into a prompt.
       if (_isRestricted(entity)) continue;
-      if (directIds.contains(entity.id)) {
+      if (directIds.contains(entity.id) &&
+          _isGlobalOrInScope(
+            entity,
+            task.id,
+            task.domainId,
+            task.milestoneId,
+          )) {
         candidates.add(_fromEntity(entity, 'task.relation', 0));
       } else {
         final scope = entity.data['scope'];
@@ -128,6 +138,13 @@ class ContextPackBuilder {
         for (final targetId in _ids(knowledgeRelations[relation])) {
           final target = byId[targetId];
           if (target != null &&
+              !_isRestricted(target) &&
+              _isGlobalOrInScope(
+                target,
+                task.id,
+                task.domainId,
+                task.milestoneId,
+              ) &&
               !candidates.any((candidate) => candidate.id == targetId)) {
             candidates.add(_fromEntity(target, 'knowledge.$relation:$seed', 2));
           }
@@ -152,7 +169,9 @@ class ContextPackBuilder {
     }
 
     final supersededIds = <String>{};
-    for (final entity in repository.list(EntityKind.knowledge)) {
+    for (final entity in graphEntities.where(
+      (entity) => entity.kind == EntityKind.knowledge,
+    )) {
       final value = entity.data['relations'];
       if (value is Map) supersededIds.addAll(_ids(value['supersedes']));
     }
@@ -244,16 +263,37 @@ class ContextPackBuilder {
     String milestoneId,
   ) {
     if (raw is! Map) return null;
-    if (_ids(raw['task_ids']).contains(taskId)) return 'scope.task';
-    if (_ids(raw['milestone_ids']).contains(milestoneId) ||
-        raw['milestone_id'] == milestoneId) {
-      return 'scope.milestone';
+    final taskIds = _ids(raw['task_ids']);
+    if (taskIds.isNotEmpty) {
+      return taskIds.contains(taskId) ? 'scope.task' : null;
+    }
+    final milestoneIds = <String>{
+      ..._ids(raw['milestone_ids']),
+      if (raw['milestone_id'] case final String id) id,
+    };
+    if (milestoneIds.isNotEmpty) {
+      return milestoneIds.contains(milestoneId) ? 'scope.milestone' : null;
     }
     if (_ids(raw['domain_ids']).contains(domainId) ||
         raw['domain_id'] == domainId) {
       return 'scope.domain';
     }
     return null;
+  }
+
+  bool _isGlobalOrInScope(
+    CanonicalEntity entity,
+    String taskId,
+    String domainId,
+    String milestoneId,
+  ) {
+    return repository
+        .scopeOf(entity)
+        .permitsTask(
+          domainId: domainId,
+          milestoneId: milestoneId,
+          taskId: taskId,
+        );
   }
 
   List<String> _contradictions(String id, Map<String, CanonicalEntity> byId) {

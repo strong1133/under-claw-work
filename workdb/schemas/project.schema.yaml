@@ -1,0 +1,16 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Project
+type: object
+required: [schema_version, id, type, domain_id, title, status, repository_ids]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^PRJ-[A-Za-z0-9_-]+$"}
+  type: {const: project}
+  domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
+  milestone_id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
+  title: {type: string, minLength: 1}
+  status: {type: string, enum: [active, archived]}
+  repository_ids:
+    type: array
+    items: {type: string, pattern: "^REP-[A-Za-z0-9_-]+$"}
+additionalProperties: true

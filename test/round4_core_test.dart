@@ -88,11 +88,15 @@ void main() {
   });
 
   test('candidate reject is immutable and creates no Task', () {
+    final canonical = CanonicalRepository(workspace);
+    _entity(canonical, EntityKind.domain, 'DOM-test', {'name': 'Domain'});
+    _entity(canonical, EntityKind.milestone, 'MLS-test', {
+      'title': 'Milestone',
+      'domain_id': 'DOM-test',
+    });
     TaskRepository(
       workspace,
     ).create(_task(id: 'TSK-parent', autoDeriveTasks: true));
-    final canonical = CanonicalRepository(workspace);
-    _entity(canonical, EntityKind.domain, 'DOM-test', {'name': 'Domain'});
     _entity(canonical, EntityKind.objective, 'OBJ-test', {
       'title': 'Objective',
       'scope': {'domain_id': 'DOM-test'},

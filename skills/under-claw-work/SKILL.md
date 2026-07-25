@@ -20,6 +20,8 @@ It provides:
 - current-revision Meta Prompt generation and approval;
 - immutable control, Run, skill-invocation, review, and Event audit;
 - portable Domain, Milestone, Objective, Knowledge, and Reference records;
+- Domain/Milestone-scoped Project, Repository, Persona, Agent Group, Channel,
+  MCP, and Skill Policy records with host-local path/profile bindings;
 - Git YAML/Markdown canonical storage and rebuildable SQLite projection;
 - optional Notion mirroring;
 - runtime adapters that remain fail-closed until verified.
@@ -59,6 +61,12 @@ worklog meta-generate <workspace> <task-id> <adapter-id>
 worklog auto-meta-next <workspace> <environment-id> <adapter-id>
 worklog notification-register <workspace> <local-config-json>
 worklog notification-list <workspace>
+worklog entity-list <workspace> [kind]
+worklog entity-create <workspace> <kind> <title> [domain-id] [milestone-id]
+worklog scope-config-create <workspace> <kind> <descriptor-json-file>
+worklog context-resolve <workspace> <domain-id> [milestone-id] [channel-id]
+worklog host-binding-set <workspace> <descriptor-json-file>
+worklog mcp-serve <workspace> <domain-id> [milestone-id]
 worklog memory-recall <workspace> <domain|milestone|task> <scope-id>
 worklog context-build <workspace> <task>
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>

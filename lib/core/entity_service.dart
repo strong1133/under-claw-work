@@ -3,6 +3,7 @@ import 'canonical_repository.dart';
 import 'context_builder.dart';
 import 'environment_service.dart';
 import 'id.dart';
+import 'models.dart';
 import 'relation_registry.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
@@ -205,6 +206,16 @@ class EntityService {
   ContextPack buildContext(String taskId) {
     final task = TaskRepository(workspace).get(taskId);
     if (task == null) throw StateError('Task does not exist: $taskId');
+    final domain = repository.get(EntityKind.domain, task.domainId);
+    final milestone = repository.get(EntityKind.milestone, task.milestoneId);
+    if (domain == null || domain.data['status'] != 'active') {
+      throw StateError('Task Domain is not active: ${task.domainId}');
+    }
+    if (milestone == null ||
+        milestone.data['status'] != 'active' ||
+        milestone.data['domain_id'] != task.domainId) {
+      throw StateError('Task Milestone is not active in its Domain.');
+    }
     final entities = [
       ...repository.list(EntityKind.objective),
       ...repository.list(EntityKind.knowledge),
@@ -214,15 +225,9 @@ class EntityService {
     final knowledge = <CanonicalEntity>[];
     final references = <CanonicalEntity>[];
     for (final entity in entities) {
+      if (entity.data['status'] == 'archived') continue;
       final scope = entity.data['scope'];
-      final scoped =
-          _contains(scope, 'task_ids', task.id) ||
-          _contains(scope, 'domain_ids', task.domainId) ||
-          _contains(scope, 'milestone_ids', task.milestoneId) ||
-          (scope is Map &&
-              (scope['domain_id'] == task.domainId ||
-                  scope['milestone_id'] == task.milestoneId));
-      if (!scoped) continue;
+      if (!_inTaskScope(scope, task)) continue;
       switch (entity.kind) {
         case EntityKind.objective:
           objectives.add(entity);
@@ -236,8 +241,8 @@ class EntityService {
     }
     return ContextPack(
       taskId: task.id,
-      domain: repository.get(EntityKind.domain, task.domainId),
-      milestone: repository.get(EntityKind.milestone, task.milestoneId),
+      domain: domain,
+      milestone: milestone,
       objectives: objectives,
       knowledge: knowledge,
       references: references,
@@ -280,6 +285,23 @@ class EntityService {
     if (source is! Map) return false;
     final candidate = source[key];
     return candidate is List && candidate.contains(value);
+  }
+
+  bool _inTaskScope(Object? source, WorkTask task) {
+    if (source is! Map) return false;
+    final taskIds = source['task_ids'];
+    if (taskIds is List && taskIds.isNotEmpty) {
+      return taskIds.contains(task.id);
+    }
+    final milestoneIds = <Object?>[
+      if (source['milestone_ids'] is List) ...(source['milestone_ids'] as List),
+      source['milestone_id'],
+    ].where((value) => value != null).toList();
+    if (milestoneIds.isNotEmpty) {
+      return milestoneIds.contains(task.milestoneId);
+    }
+    return _contains(source, 'domain_ids', task.domainId) ||
+        source['domain_id'] == task.domainId;
   }
 
   static const _editableKinds = {

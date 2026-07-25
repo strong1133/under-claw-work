@@ -11,6 +11,10 @@ void main() {
     expect(output, contains('runtime-register <workspace>'));
     expect(output, contains('meta-generate <workspace>'));
     expect(output, contains('worker-next-agent <workspace>'));
+    expect(output, contains('scope-config-create <workspace>'));
+    expect(output, contains('context-resolve <workspace>'));
+    expect(output, contains('mcp-serve <workspace>'));
+    expect(output, contains('host-binding-set <workspace>'));
     expect(output, contains('CanonicalSyncService(workspace)'));
     expect(output, contains('MetaPromptService('));
     expect(output, contains("capability: 'orchestration'"));

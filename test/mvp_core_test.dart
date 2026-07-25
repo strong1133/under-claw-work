@@ -29,6 +29,7 @@ void main() {
     expect(task.approval, PromptApproval.pending);
     task = tasks.approveMeta(task);
     expect(task.isMetaCurrent, isTrue);
+    expect(task.status, TaskStatus.ready);
     expect(TaskRepository(workspace).get(task.id)!.isMetaCurrent, isTrue);
   });
 

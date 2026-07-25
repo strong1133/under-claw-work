@@ -2,6 +2,7 @@
 set -euo pipefail
 
 product_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+expected_manifest_hash="${1:-}"
 install_root="${UNDER_CLAW_WORK_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/under-claw-work}"
 source_repo="${UNDER_CLAW_SKILL_SOURCE:-}"
 revision="ab3e169f26aea433e4d25709e42a05e74324700b"
@@ -18,15 +19,6 @@ if [[ -d "$product_root/app" || -d "$product_root/bundled-skills" ||
   -f "$product_root/ACCEPTED-RUNTIMES.txt" ]]; then
   packaged=1
 fi
-if [[ "$packaged" == "1" ]]; then
-  [[ -f "$product_root/release-manifest.tsv" &&
-    -x "$product_root/packaging/verify-release.sh" ]] || {
-      echo "Packaged release is missing its manifest or verifier" >&2
-      exit 65
-    }
-  bash "$product_root/packaging/verify-release.sh" "$product_root"
-fi
-
 staging="$(mktemp -d)"
 candidate=""
 backup=""
@@ -35,6 +27,23 @@ cleanup() {
   [[ -z "$candidate" || ! -d "$candidate" ]] || rm -rf "$candidate"
 }
 trap cleanup EXIT
+if [[ "$packaged" == "1" ]]; then
+  [[ -f "$product_root/release-manifest.tsv" &&
+    -x "$product_root/packaging/verify-release.sh" ]] || {
+      echo "Packaged release is missing its manifest or verifier" >&2
+      exit 65
+    }
+  [[ "$expected_manifest_hash" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Install requires the independently obtained release manifest SHA-256" >&2
+    exit 65
+  }
+  release_snapshot="$staging/release"
+  mkdir -p "$release_snapshot"
+  cp -RP "$product_root/." "$release_snapshot/"
+  bash "$product_root/packaging/verify-release.sh" \
+    "$release_snapshot" "$expected_manifest_hash"
+  product_root="$release_snapshot"
+fi
 
 if [[ -z "$source_repo" && -d "$product_root/bundled-skills/upstream/.git" ]]; then
   source_repo="$product_root/bundled-skills/upstream"
@@ -100,10 +109,20 @@ host_detected() {
 preflight_skill_tree() {
   local host_home="$1"
   local skill_root="$host_home/skills"
+  if [[ -L "$host_home" ]]; then
+    echo "Refusing symbolic-link host root: $host_home" >&2
+    exit 73
+  fi
+  if [[ -L "$skill_root" ]]; then
+    echo "Refusing symbolic-link skill root: $skill_root" >&2
+    exit 73
+  fi
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
     under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     local target="$skill_root/$skill"
-    if [[ -e "$target" && ! -f "$target/.under-claw-work-owned" ]]; then
+    local marker="$target/.under-claw-work-owned"
+    if [[ -L "$target" || -L "$marker" ||
+      ( -e "$target" && ! -f "$marker" ) ]]; then
       echo "Refusing to overwrite non-owned skill: $target" >&2
       exit 73
     fi
@@ -117,11 +136,17 @@ if host_detected hermes hermes "$hermes_home"; then
 fi
 if host_detected claude-code claude "$claude_home"; then
   preflight_skill_tree "$claude_home"
+  command_root="$claude_home/commands"
+  if [[ -L "$command_root" ]]; then
+    echo "Refusing symbolic-link command root: $command_root" >&2
+    exit 73
+  fi
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop \
     under-claw-jarvis-plan under-claw-work-plan under-claw-work; do
     command_target="$claude_home/commands/$skill.md"
-    if [[ -e "$command_target" &&
-      ! -f "$command_target.under-claw-work-owned" ]]; then
+    command_marker="$command_target.under-claw-work-owned"
+    if [[ -L "$command_target" || -L "$command_marker" ||
+      ( -e "$command_target" && ! -f "$command_marker" ) ]]; then
       echo "Refusing to overwrite non-owned command: $command_target" >&2
       exit 73
     fi
@@ -158,7 +183,7 @@ if [[ "$packaged" == "1" ]]; then
     cp -RL "$product_root/$directory" "$candidate/$directory"
   done
   for file in UNSIGNED-NOTICE.txt ACCEPTED-RUNTIMES.txt RELEASE-VERSION.txt \
-    README.txt release-manifest.tsv; do
+    SOURCE-REVISION.txt README.txt release-manifest.tsv; do
     cp "$product_root/$file" "$candidate/$file"
   done
 else
@@ -188,6 +213,14 @@ install_skill_tree() {
   local host="$1"
   local host_home="$2"
   local skill_root="$host_home/skills"
+  if [[ -L "$host_home" ]]; then
+    echo "Refusing symbolic-link host root: $host_home" >&2
+    return 73
+  fi
+  if [[ -L "$skill_root" ]]; then
+    echo "Refusing symbolic-link skill root: $skill_root" >&2
+    return 73
+  fi
   mkdir -p "$skill_root"
   echo "host_root	$host	$host_home" >> "$manifest"
 
@@ -224,33 +257,46 @@ install_skill_tree() {
 install_claude_commands() {
   local claude_home="$1"
   local command_root="$claude_home/commands"
+  if [[ -L "$command_root" ]]; then
+    echo "Refusing symbolic-link command root: $command_root" >&2
+    return 73
+  fi
   mkdir -p "$command_root"
   for skill in under-claw-meta-prompt under-claw-jarvis-plan-loop under-claw-jarvis-plan; do
     local source="$source_repo/commands/$skill.md"
     [[ -f "$source" ]] || continue
     local target="$command_root/$skill.md"
-    if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+    local marker="$target.under-claw-work-owned"
+    if [[ -L "$target" || -L "$marker" ||
+      ( -e "$target" && ! -f "$marker" ) ]]; then
       echo "Refusing to overwrite non-owned command: $target" >&2
       return 73
     fi
+    rm -f -- "$target"
     cp "$source" "$target"
     touch "$target.under-claw-work-owned"
     echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
   done
   local target="$command_root/under-claw-work-plan.md"
-  if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+  local marker="$target.under-claw-work-owned"
+  if [[ -L "$target" || -L "$marker" ||
+    ( -e "$target" && ! -f "$marker" ) ]]; then
     echo "Refusing to overwrite non-owned command: $target" >&2
     return 73
   fi
+  rm -f -- "$target"
   cp "$product_root/skills/under-claw-work-plan/SKILL.md" "$target"
   touch "$target.under-claw-work-owned"
   echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"
 
   target="$command_root/under-claw-work.md"
-  if [[ -e "$target" && ! -f "$target.under-claw-work-owned" ]]; then
+  marker="$target.under-claw-work-owned"
+  if [[ -L "$target" || -L "$marker" ||
+    ( -e "$target" && ! -f "$marker" ) ]]; then
     echo "Refusing to overwrite non-owned command: $target" >&2
     return 73
   fi
+  rm -f -- "$target"
   cp "$product_root/skills/under-claw-work/SKILL.md" "$target"
   touch "$target.under-claw-work-owned"
   echo "owned_command	claude-code	$target	$(checksum "$target")" >> "$manifest"

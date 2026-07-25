@@ -47,6 +47,14 @@ Commands:
   entity-update <workspace> <kind> <id> <title>
   entity-archive <workspace> <kind> <id>
   entity-link <workspace> <kind> <id> <field> <target-kind> <target-id>
+  scope-config-create <workspace> <kind> <descriptor-json-file>
+             create Project/Repository/Persona/AgentGroup/Channel/MCP/Skill policy
+  context-resolve <workspace> <domain-id> [milestone-id] [channel-id]
+             resolve portable Agent, Discord, MCP and Skill configuration
+  mcp-serve <workspace> <domain-id> [milestone-id]
+             run a read-only, scope-fixed MCP server over stdio
+  host-binding-set <workspace> <descriptor-json-file>
+             store local repository/Profile/MCP bindings under .worklog
   graph-validate <workspace>
   knowledge-search <workspace> <query>
   context-build <workspace> <task-id> [token-budget]
@@ -70,8 +78,8 @@ Commands:
              register local-only FCM/Hermes notification credentials
   notification-list <workspace>
              list local notification channel ids without secrets
-  update-check <extracted-release-directory>
-  update-apply <extracted-release-directory>
+  update-check <extracted-release-directory> <release-manifest-sha256>
+  update-apply <extracted-release-directory> <release-manifest-sha256>
              verify and atomically apply an extracted release
   update-rollback
              swap back to the previously verified installation
@@ -105,6 +113,21 @@ Commands:
     );
     return;
   }
+  if (arguments.first == 'mcp-serve') {
+    if (arguments.length < 3) {
+      throw const FormatException(
+        'mcp-serve requires workspace and domain id.',
+      );
+    }
+    final workspace = Workspace(Directory(arguments[1]));
+    final handler = UnderClawMcpHandler(
+      workspace,
+      domainId: arguments[2],
+      milestoneId: arguments.length > 3 ? arguments[3] : null,
+    );
+    await UnderClawMcpServer(handler).runStdio();
+    return;
+  }
   if (arguments.first == 'update-check' ||
       arguments.first == 'update-apply' ||
       arguments.first == 'update-rollback') {
@@ -113,20 +136,21 @@ Commands:
       stdout.writeln(await service.rollback());
       return;
     }
-    if (arguments.length != 2) {
+    if (arguments.length != 3) {
       throw const FormatException(
-        'update-check/update-apply requires an extracted release directory.',
+        'update-check/update-apply requires a release directory and trusted manifest SHA-256.',
       );
     }
     final release = Directory(arguments[1]);
+    final manifestSha256 = arguments[2];
     if (arguments.first == 'update-check') {
-      final status = await service.check(release);
+      final status = await service.check(release, manifestSha256);
       stdout.writeln(
         'current=${status.currentVersion} candidate=${status.candidateVersion} '
         'update_available=${status.updateAvailable}',
       );
     } else {
-      stdout.writeln(await service.apply(release));
+      stdout.writeln(await service.apply(release, manifestSha256));
     }
     return;
   }
@@ -388,6 +412,60 @@ Commands:
         );
         projection.rebuild();
         stdout.writeln(entity.id);
+      case 'scope-config-create':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'scope-config-create requires workspace, kind and descriptor file.',
+          );
+        }
+        final kind = EntityKind.values.firstWhere(
+          (candidate) =>
+              candidate.name == arguments[2] || candidate.type == arguments[2],
+          orElse: () => throw FormatException(
+            'Unknown scope configuration kind: ${arguments[2]}',
+          ),
+        );
+        final decoded = jsonDecode(File(arguments[3]).readAsStringSync());
+        if (decoded is! Map) {
+          throw const FormatException('Descriptor must be a JSON object.');
+        }
+        final entity = ScopeConfigurationService(workspace)
+            .createFromDescriptor(
+              kind,
+              decoded.map((key, value) => MapEntry(key.toString(), value)),
+            );
+        projection.rebuild();
+        stdout.writeln(entity.id);
+      case 'context-resolve':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'context-resolve requires workspace and domain id.',
+          );
+        }
+        final resolved = ScopeContextResolver(workspace).resolve(
+          domainId: arguments[2],
+          milestoneId: arguments.length > 3 && arguments[3] != '-'
+              ? arguments[3]
+              : null,
+          externalChannelId: arguments.length > 4 && arguments[4] != '-'
+              ? arguments[4]
+              : null,
+        );
+        stdout.writeln(jsonEncode(resolved.toJson()));
+      case 'host-binding-set':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'host-binding-set requires workspace and descriptor file.',
+          );
+        }
+        final decoded = jsonDecode(File(arguments[2]).readAsStringSync());
+        if (decoded is! Map) {
+          throw const FormatException('Descriptor must be a JSON object.');
+        }
+        final binding = HostBindingRegistry(workspace).setFromDescriptor(
+          decoded.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        stdout.writeln(binding.key);
       case 'entity-update':
         if (arguments.length < 5) {
           throw const FormatException(

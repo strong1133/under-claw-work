@@ -33,6 +33,80 @@ class WorklogContractValidator {
         _id(entity, 'domain_id', 'DOM-');
         _nonEmpty(entity, 'title');
         _status(entity);
+      case EntityKind.project:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _configurationStatus(entity);
+        _stringList(entity, 'repository_ids', prefix: 'REP-');
+      case EntityKind.repository:
+        _nonEmpty(entity, 'title');
+        _configurationStatus(entity);
+        final locator = _map(entity, 'locator');
+        _nestedNonEmpty(entity, locator, 'locator.kind', 'kind');
+        _nestedNonEmpty(entity, locator, 'locator.value', 'value');
+        _repositoryLocator(entity, locator);
+      case EntityKind.persona:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _configurationStatus(entity);
+      case EntityKind.agentGroup:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _configurationStatus(entity);
+        final roles = _list(entity, 'roles');
+        if (roles.isEmpty) {
+          throw ContractViolation(entity.id, 'roles', 'must not be empty');
+        }
+        for (var index = 0; index < roles.length; index++) {
+          final role = roles[index];
+          if (role is! Map ||
+              role.keys.any(
+                (key) =>
+                    !const {'name', 'persona_id', 'independent'}.contains(key),
+              )) {
+            throw ContractViolation(
+              entity.id,
+              'roles[$index]',
+              'must be a role object with no additional properties',
+            );
+          }
+          _nestedNonEmpty(entity, role, 'roles[$index].name', 'name');
+          _nestedId(
+            entity,
+            role,
+            'roles[$index].persona_id',
+            'persona_id',
+            'PER-',
+          );
+          if (role['independent'] is! bool) {
+            throw ContractViolation(
+              entity.id,
+              'roles[$index].independent',
+              'must be a boolean',
+            );
+          }
+        }
+      case EntityKind.channelBinding:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _equals(entity, 'platform', 'discord');
+        _nonEmpty(entity, 'external_channel_id');
+        _id(entity, 'agent_group_id', 'AGG-');
+        _configurationStatus(entity);
+      case EntityKind.mcpBinding:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _pattern(entity, 'binding_key', RegExp(r'^[A-Za-z0-9._-]+$'));
+        _allowed(entity, 'access', const ['read', 'read_write']);
+        _configurationStatus(entity);
+      case EntityKind.skillPolicy:
+        _configurationScope(entity);
+        _nonEmpty(entity, 'title');
+        _stringList(entity, 'ordered_skill_ids');
+        if (entity.data['per_round_skill_id'] != null) {
+          _nonEmpty(entity, 'per_round_skill_id');
+        }
+        _configurationStatus(entity);
       case EntityKind.objective:
         final scope = _map(entity, 'scope');
         _nestedId(entity, scope, 'scope.domain_id', 'domain_id', 'DOM-');
@@ -351,7 +425,7 @@ class WorklogContractValidator {
     r'^(MK-[A-Za-z0-9]+|legacy:ENV-[A-Za-z0-9_-]+)$',
   );
 
-  void validateTask(WorkTask task) {
+  void validateTask(WorkTask task, {bool allowStaleApproval = false}) {
     if (!task.id.startsWith('TSK-')) {
       throw ContractViolation(task.id, 'id', 'must use TSK- prefix');
     }
@@ -367,7 +441,9 @@ class WorklogContractValidator {
     if (task.promptDraftRevision < 1) {
       throw ContractViolation(task.id, 'prompt.draft_revision', 'minimum is 1');
     }
-    if (task.approval == PromptApproval.approved && !task.isMetaCurrent) {
+    if (!allowStaleApproval &&
+        task.approval == PromptApproval.approved &&
+        !task.isMetaCurrent) {
       throw ContractViolation(
         task.id,
         'prompt.approval',
@@ -389,6 +465,9 @@ class WorklogContractValidator {
     List<WorkTask> tasks,
   ) {
     final ids = <String>{};
+    final skillPolicyScopes = <String>{};
+    final channelTargets = <String>{};
+    final mcpScopeKeys = <String>{};
     final entities = EntityKind.values
         .where((kind) => kind != EntityKind.task)
         .expand(repository.list);
@@ -397,6 +476,46 @@ class WorklogContractValidator {
         throw ContractViolation(entity.id, 'id', 'duplicate canonical ID');
       }
       if (entity.kind != EntityKind.task) validateEntity(entity);
+      final scope = entity.data['scope'];
+      final scopeDomain = scope is Map
+          ? scope['domain_id']
+          : entity.data['domain_id'];
+      final scopeMilestone = scope is Map
+          ? scope['milestone_id']
+          : entity.data['milestone_id'];
+      final scopeKey = '${scopeDomain ?? ''}/${scopeMilestone ?? ''}';
+      if (entity.data['status'] == 'active' &&
+          entity.kind == EntityKind.skillPolicy &&
+          !skillPolicyScopes.add(scopeKey)) {
+        throw ContractViolation(
+          entity.id,
+          'scope',
+          'only one Skill Policy is allowed per exact scope',
+        );
+      }
+      if (entity.data['status'] == 'active' &&
+          entity.kind == EntityKind.channelBinding) {
+        final target =
+            '${entity.data['platform']}/${entity.data['external_channel_id']}';
+        if (!channelTargets.add(target)) {
+          throw ContractViolation(
+            entity.id,
+            'external_channel_id',
+            'external channel is already bound',
+          );
+        }
+      }
+      if (entity.data['status'] == 'active' &&
+          entity.kind == EntityKind.mcpBinding) {
+        final key = '$scopeKey/${entity.data['binding_key']}';
+        if (!mcpScopeKeys.add(key)) {
+          throw ContractViolation(
+            entity.id,
+            'binding_key',
+            'MCP binding key must be unique in its exact scope',
+          );
+        }
+      }
     }
     for (final task in tasks) {
       if (!ids.add(task.id)) {
@@ -407,6 +526,91 @@ class WorklogContractValidator {
   }
 
   void _status(CanonicalEntity entity) => _nonEmpty(entity, 'status');
+
+  void _configurationStatus(CanonicalEntity entity) =>
+      _allowed(entity, 'status', const ['active', 'archived']);
+
+  void _repositoryLocator(
+    CanonicalEntity entity,
+    Map<Object?, Object?> locator,
+  ) {
+    final kind = locator['kind'] as String;
+    final value = (locator['value'] as String).trim();
+    if (!const {'git_remote', 'logical'}.contains(kind)) {
+      throw ContractViolation(
+        entity.id,
+        'locator.kind',
+        'must be git_remote or logical',
+      );
+    }
+    final uri = Uri.tryParse(value);
+    final isWindowsAbsolute = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value);
+    if (value.startsWith('/') || isWindowsAbsolute || uri?.scheme == 'file') {
+      throw ContractViolation(
+        entity.id,
+        'locator.value',
+        'local paths belong in environment-local bindings',
+      );
+    }
+    if (uri != null &&
+        uri.userInfo.isNotEmpty &&
+        (const {'http', 'https'}.contains(uri.scheme) ||
+            Uri.decodeComponent(uri.userInfo).contains(':'))) {
+      throw ContractViolation(
+        entity.id,
+        'locator.value',
+        'must not contain embedded credentials',
+      );
+    }
+    const credentialKeys = {
+      'token',
+      'secret',
+      'password',
+      'credential',
+      'api_key',
+      'apikey',
+      'access_key',
+      'private_key',
+    };
+    final hasCredentialQuery = uri?.queryParameters.keys.any((key) {
+      final normalized = key.toLowerCase();
+      return credentialKeys.any(normalized.contains);
+    });
+    if (hasCredentialQuery ?? false) {
+      throw ContractViolation(
+        entity.id,
+        'locator.value',
+        'must not contain credential query parameters',
+      );
+    }
+  }
+
+  void _configurationScope(CanonicalEntity entity) {
+    _id(entity, 'domain_id', 'DOM-');
+    final domainId = entity.data['domain_id'];
+    final milestoneId = entity.data['milestone_id'];
+    if (milestoneId != null &&
+        (milestoneId is! String || !milestoneId.startsWith('MLS-'))) {
+      throw ContractViolation(
+        entity.id,
+        'milestone_id',
+        'must use MLS- prefix',
+      );
+    }
+    final rawScope = entity.data['scope'];
+    if (rawScope == null) return;
+    if (rawScope is! Map) {
+      throw ContractViolation(entity.id, 'scope', 'must be an object');
+    }
+    if (rawScope['domain_id'] != domainId ||
+        rawScope['milestone_id'] != milestoneId) {
+      throw ContractViolation(
+        entity.id,
+        'scope',
+        'must match top-level domain_id and milestone_id',
+      );
+    }
+  }
 
   void _nonEmpty(CanonicalEntity entity, String field) {
     final value = entity.data[field];
@@ -421,6 +625,44 @@ class WorklogContractValidator {
       throw ContractViolation(entity.id, field, 'must be an object');
     }
     return value;
+  }
+
+  List<Object?> _list(CanonicalEntity entity, String field) {
+    final value = entity.data[field];
+    if (value is! List) {
+      throw ContractViolation(entity.id, field, 'must be a list');
+    }
+    return value;
+  }
+
+  List<String> _stringList(
+    CanonicalEntity entity,
+    String field, {
+    String? prefix,
+  }) {
+    final values = _list(entity, field);
+    if (values.any(
+      (value) =>
+          value is! String ||
+          value.trim().isEmpty ||
+          (prefix != null && !value.startsWith(prefix)),
+    )) {
+      throw ContractViolation(
+        entity.id,
+        field,
+        prefix == null
+            ? 'must contain non-empty strings'
+            : 'must contain $prefix ids',
+      );
+    }
+    return values.cast<String>();
+  }
+
+  void _pattern(CanonicalEntity entity, String field, RegExp pattern) {
+    final value = entity.data[field];
+    if (value is! String || !pattern.hasMatch(value)) {
+      throw ContractViolation(entity.id, field, 'has an invalid format');
+    }
   }
 
   void _id(CanonicalEntity entity, String field, String prefix) {

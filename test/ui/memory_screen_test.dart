@@ -36,6 +36,10 @@ void main() {
       find.widgetWithText(TextField, 'Domain ID'),
       'DOM-mgmt',
     );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Milestone ID'),
+      'MLS-mgmt',
+    );
     await tester.tap(find.textContaining('Recall'));
     await tester.pumpAndSettle();
   }

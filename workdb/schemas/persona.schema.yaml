@@ -1,0 +1,13 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Persona
+type: object
+required: [schema_version, id, type, title, status, domain_id]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^PER-[A-Za-z0-9_-]+$"}
+  type: {const: persona}
+  title: {type: string, minLength: 1}
+  status: {type: string, enum: [active, archived]}
+  domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
+  milestone_id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
+additionalProperties: true

@@ -1,0 +1,15 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: McpBinding
+type: object
+required: [schema_version, id, type, domain_id, title, status, binding_key, access]
+properties:
+  schema_version: {const: 1}
+  id: {type: string, pattern: "^MCB-[A-Za-z0-9_-]+$"}
+  type: {const: mcp_binding}
+  domain_id: {type: string, pattern: "^DOM-[A-Za-z0-9_-]+$"}
+  milestone_id: {type: string, pattern: "^MLS-[A-Za-z0-9_-]+$"}
+  title: {type: string, minLength: 1}
+  status: {type: string, enum: [active, archived]}
+  binding_key: {type: string, pattern: "^[A-Za-z0-9._-]+$"}
+  access: {type: string, enum: [read, read_write]}
+additionalProperties: true

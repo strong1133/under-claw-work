@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:under_claw_work/core/release_update_service.dart';
@@ -8,6 +10,7 @@ void main() {
   late Directory root;
   late Directory installRoot;
   late Directory release;
+  late String manifestSha256;
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('release-update-service-');
@@ -20,6 +23,7 @@ void main() {
     File(
       p.join(release.path, 'release-manifest.tsv'),
     ).writeAsStringSync('manifest\n');
+    manifestSha256 = sha256.convert(utf8.encode('manifest\n')).toString();
     final releasePackaging = Directory(p.join(release.path, 'packaging'))
       ..createSync();
     _script(
@@ -49,7 +53,7 @@ void main() {
     () async {
       final service = ReleaseUpdateService(installRoot: installRoot);
 
-      final status = await service.check(release);
+      final status = await service.check(release, manifestSha256);
 
       expect(status.currentVersion, 'v1');
       expect(status.candidateVersion, 'v2');
@@ -60,7 +64,7 @@ void main() {
   test('applies through the installed transactional updater', () async {
     final output = await ReleaseUpdateService(
       installRoot: installRoot,
-    ).apply(release);
+    ).apply(release, manifestSha256);
 
     if (Platform.isWindows) {
       expect(output, startsWith('applied:/'));
@@ -77,6 +81,12 @@ void main() {
     ).rollback();
 
     expect(output, contains('rolled-back'));
+  });
+
+  test('rejects update checks without a trusted manifest digest', () async {
+    final service = ReleaseUpdateService(installRoot: installRoot);
+
+    expect(() => service.check(release, 'untrusted'), throwsFormatException);
   });
 }
 

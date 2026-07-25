@@ -66,4 +66,13 @@ void main() {
     expect(script, contains(r'default_worklog="$install_root/bin/worklog"'));
     expect(script, contains(r'"$worklog_bin" auto-meta-next'));
   });
+
+  test('unsigned package records and installs its source revision', () {
+    final build = File('packaging/build-unsigned.sh').readAsStringSync();
+    final install = File('packaging/install.sh').readAsStringSync();
+
+    expect(build, contains('SOURCE-REVISION.txt'));
+    expect(build, contains('UNDER_CLAW_SOURCE_REVISION'));
+    expect(install, contains('SOURCE-REVISION.txt'));
+  });
 }

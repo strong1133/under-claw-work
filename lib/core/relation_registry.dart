@@ -99,6 +99,28 @@ class RelationRegistry {
           }.contains(relation)) {
         throw FormatException('$sourceId cannot $relation itself.');
       }
+      if (sourceKind == EntityKind.task &&
+          const {
+            EntityKind.objective,
+            EntityKind.knowledge,
+            EntityKind.reference,
+          }.contains(targetKind)) {
+        final task = TaskRepository(workspace).get(sourceId);
+        final target = repository.get(targetKind, targetId);
+        if (task == null ||
+            target == null ||
+            !repository
+                .scopeOf(target)
+                .permitsTask(
+                  domainId: task.domainId,
+                  milestoneId: task.milestoneId,
+                  taskId: task.id,
+                )) {
+          throw FormatException(
+            '$sourceId relation $relation has out-of-scope target $targetId.',
+          );
+        }
+      }
     }
   }
 

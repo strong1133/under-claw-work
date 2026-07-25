@@ -2,6 +2,7 @@
 set -euo pipefail
 
 release="${1:-}"
+expected_manifest_hash="${2:-}"
 install_root="${UNDER_CLAW_WORK_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/under-claw-work}"
 [[ -d "$release" && -f "$release/release-manifest.tsv" ]] || {
   echo "Usage: update.sh <extracted-release-directory>" >&2; exit 64;
@@ -26,13 +27,18 @@ trusted_verifier="$install_root/packaging/verify-release.sh"
 [[ -f "$trusted_verifier" && ! -L "$trusted_verifier" ]] || {
   echo "Trusted installed release verifier is unavailable" >&2; exit 65;
 }
-bash "$trusted_verifier" "$release"
+release_snapshot="$(mktemp -d "$parent/.under-claw-release.XXXXXX")"
+trap 'rm -rf "$release_snapshot"; cleanup_lock' EXIT
+cp -RP "$release/." "$release_snapshot/"
+bash "$trusted_verifier" "$release_snapshot" "$expected_manifest_hash"
+release="$release_snapshot"
 
 candidate="$(mktemp -d "$parent/.under-claw-update.XXXXXX")"
 backup="$parent/.under-claw-backup.$$"
 previous="$install_root.previous"
 cleanup() {
   if [[ -d "$candidate" ]]; then rm -rf "$candidate"; fi
+  if [[ -d "$release_snapshot" ]]; then rm -rf "$release_snapshot"; fi
   rmdir "$lock" 2>/dev/null || true
   return 0
 }
@@ -52,7 +58,7 @@ for directory in app packaging bundled-skills skills personas; do
   cp -RL "$release/$directory" "$candidate/$directory"
 done
 for file in UNSIGNED-NOTICE.txt ACCEPTED-RUNTIMES.txt RELEASE-VERSION.txt \
-  README.txt release-manifest.tsv; do
+  SOURCE-REVISION.txt README.txt release-manifest.tsv; do
   cp "$release/$file" "$candidate/$file"
 done
 

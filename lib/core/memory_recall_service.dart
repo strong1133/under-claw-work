@@ -230,17 +230,20 @@ class MemoryRecallService {
         'by the trusted capability issuer.',
       );
     }
-    final approvedMatchTargets = <String, String>{}; // knowledgeId -> matchId
+    final approvedMatchTargets = <String, (String, String)>{};
     for (final match in MatchService(workspace).list()) {
       if (match.reviewState != 'approved') continue;
       if (!(match.subjectId.startsWith('KNW-'))) continue;
       final target = match.targetId;
       if (target == domainId || target == milestoneId || target == taskId) {
-        approvedMatchTargets[match.subjectId] = match.id;
+        approvedMatchTargets[match.subjectId] = (match.id, target);
       }
     }
 
-    final knowledge = repository.list(EntityKind.knowledge);
+    final knowledge = repository
+        .list(EntityKind.knowledge)
+        .where((entity) => entity.data['status'] != 'archived')
+        .toList();
     // Index supersede edges so a stale item can be shadowed regardless of which
     // agent authored the newer fact.
     final supersededBy = <String, List<String>>{};
@@ -309,17 +312,33 @@ class MemoryRecallService {
     String? domainId,
     String? milestoneId,
     String? taskId,
-    Map<String, String> approvedMatchTargets,
+    Map<String, (String, String)> approvedMatchTargets,
   ) {
+    final approvedMatch = approvedMatchTargets[entity.id];
+    if (taskId != null && approvedMatch?.$2 == taskId) {
+      return 'match:${approvedMatch!.$1}';
+    }
     final scope = entity.data['scope'];
     if (scope is Map) {
-      if (taskId != null && _ids(scope['task_ids']).contains(taskId)) {
-        return 'scope.task';
+      final scopedTasks = _ids(scope['task_ids']);
+      if (scopedTasks.isNotEmpty) {
+        if (taskId != null && scopedTasks.contains(taskId)) {
+          return 'scope.task';
+        }
+        return null;
       }
-      if (milestoneId != null &&
-          (_ids(scope['milestone_ids']).contains(milestoneId) ||
-              scope['milestone_id'] == milestoneId)) {
-        return 'scope.milestone';
+      final scopedMilestones = {
+        ..._ids(scope['milestone_ids']),
+        ..._ids(scope['milestone_id']),
+      };
+      if (scopedMilestones.isNotEmpty) {
+        if (milestoneId != null && scopedMilestones.contains(milestoneId)) {
+          return 'scope.milestone';
+        }
+        if (milestoneId != null && approvedMatch?.$2 == milestoneId) {
+          return 'match:${approvedMatch!.$1}';
+        }
+        return null;
       }
       if (domainId != null &&
           (_ids(scope['domain_ids']).contains(domainId) ||
@@ -327,8 +346,7 @@ class MemoryRecallService {
         return 'scope.domain';
       }
     }
-    final matchId = approvedMatchTargets[entity.id];
-    if (matchId != null) return 'match:$matchId';
+    if (approvedMatch != null) return 'match:${approvedMatch.$1}';
     return null;
   }
 

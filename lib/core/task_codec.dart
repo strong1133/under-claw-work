@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:yaml/yaml.dart';
 
 import 'models.dart';
@@ -7,8 +5,8 @@ import 'models.dart';
 class TaskCodec {
   static const currentSchemaVersion = 2;
 
-  static WorkTask read(File file) {
-    final raw = loadYaml(file.readAsStringSync()) as YamlMap;
+  static WorkTask decode(String content) {
+    final raw = loadYaml(content) as YamlMap;
     final schemaVersion = raw['schema_version'] as int? ?? 1;
     if (schemaVersion < 1 || schemaVersion > currentSchemaVersion) {
       throw FormatException('Unsupported Task schema_version: $schemaVersion');

@@ -3,6 +3,7 @@ import 'canonical_repository.dart';
 import 'id.dart';
 import 'claim_service.dart';
 import 'projection.dart';
+import 'scope_context_resolver.dart';
 import 'task_candidate_service.dart';
 
 class CandidateProposal {
@@ -86,21 +87,47 @@ class SkillPipeline {
     }
     final repository = CanonicalRepository(projection.workspace);
     final startedAt = DateTime.now().toUtc().toIso8601String();
-    if (repository.get(EntityKind.run, runId) == null) {
-      repository.create(
-        CanonicalEntity(
-          kind: EntityKind.run,
-          id: runId,
-          data: {
-            'schema_version': 1,
-            'id': runId,
-            'type': 'run',
-            'operation_id': 'OPR-$runId',
-            'task_id': task.id,
-            'status': 'running',
-            'created_at': startedAt,
-          },
-        ),
+    final existingRun = repository.get(EntityKind.run, runId);
+    if (existingRun?.data['scope_context_snapshot'] == null) {
+      withRunScopeContextSnapshot(
+        projection.workspace,
+        domainId: task.domainId,
+        milestoneId: task.milestoneId,
+        persist: (scopeContextSnapshot) {
+          final currentRun = repository.get(EntityKind.run, runId);
+          if (currentRun == null) {
+            return repository.create(
+              CanonicalEntity(
+                kind: EntityKind.run,
+                id: runId,
+                data: {
+                  'schema_version': 1,
+                  'id': runId,
+                  'type': 'run',
+                  'operation_id': 'OPR-$runId',
+                  'task_id': task.id,
+                  'status': 'running',
+                  'created_at': startedAt,
+                  'scope_context_snapshot': scopeContextSnapshot,
+                },
+              ),
+            );
+          }
+          if (currentRun.data['scope_context_snapshot'] != null) {
+            return currentRun;
+          }
+          return repository.update(
+            CanonicalEntity(
+              kind: currentRun.kind,
+              id: currentRun.id,
+              data: {
+                ...currentRun.data,
+                'scope_context_snapshot': scopeContextSnapshot,
+              },
+              body: currentRun.body,
+            ),
+          );
+        },
       );
     }
     final root = SkillInvocation(orchestrator, runId, 0);

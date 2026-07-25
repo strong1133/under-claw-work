@@ -2,6 +2,7 @@
 set -euo pipefail
 
 release="${1:-}"
+expected_manifest_hash="${2:-}"
 [[ -n "$release" && "$release" = /* && -d "$release" ]] || {
   echo "Release directory must be an existing absolute path" >&2; exit 64;
 }
@@ -20,6 +21,10 @@ checksum() {
   else
     sha256sum "$1" | awk '{print $1}'
   fi
+}
+[[ "$expected_manifest_hash" =~ ^[0-9a-f]{64}$ &&
+  "$(checksum "$manifest")" == "$expected_manifest_hash" ]] || {
+  echo "Release manifest does not match the trusted digest" >&2; exit 65;
 }
 listed="$(mktemp)"
 cleanup() { rm -f "$listed"; }

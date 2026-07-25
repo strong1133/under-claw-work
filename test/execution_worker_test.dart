@@ -13,6 +13,34 @@ void main() {
     root = Directory.systemTemp.createTempSync('worklog-worker-');
     workspace = Workspace(root)..ensureLayout();
     projection = ProjectionStore(workspace);
+    final repository = CanonicalRepository(workspace);
+    repository.create(
+      CanonicalEntity(
+        kind: EntityKind.domain,
+        id: 'DOM-worker',
+        data: const {
+          'schema_version': 1,
+          'id': 'DOM-worker',
+          'type': 'domain',
+          'name': 'Worker Domain',
+          'status': 'active',
+        },
+      ),
+    );
+    repository.create(
+      CanonicalEntity(
+        kind: EntityKind.milestone,
+        id: 'MLS-worker',
+        data: const {
+          'schema_version': 1,
+          'id': 'MLS-worker',
+          'type': 'milestone',
+          'title': 'Worker Milestone',
+          'domain_id': 'DOM-worker',
+          'status': 'active',
+        },
+      ),
+    );
   });
 
   tearDown(() {
@@ -38,7 +66,11 @@ void main() {
     expect(result?.status, 'completed');
     expect(result?.runId, runId);
     final canonical = CanonicalRepository(workspace);
-    expect(canonical.get(EntityKind.run, runId)?.data['status'], 'completed');
+    final run = canonical.get(EntityKind.run, runId)!;
+    expect(run.data['status'], 'completed');
+    final snapshot = run.data['scope_context_snapshot'] as Map;
+    expect((snapshot['domain'] as Map)['id'], task.domainId);
+    expect((snapshot['milestone'] as Map)['id'], task.milestoneId);
     expect(
       TaskRepository(workspace).get(task.id)?.status,
       TaskStatus.completed,
@@ -50,6 +82,109 @@ void main() {
           (item) => item.data['event_type'] == 'orchestration_completed',
         );
     expect((event.data['process_evidence'] as Map)['exit_code'], 0);
+  });
+
+  test(
+    'direct pipeline Run creation snapshots resolved scope context',
+    () async {
+      final task = _task();
+      TaskRepository(workspace).create(task);
+
+      await SkillPipeline(
+        projection,
+        _ResultRunner(_success),
+        manageClaim: false,
+      ).execute(task, 'RUN-direct-snapshot');
+
+      final run = CanonicalRepository(
+        workspace,
+      ).get(EntityKind.run, 'RUN-direct-snapshot')!;
+      final snapshot = run.data['scope_context_snapshot'] as Map;
+      expect((snapshot['domain'] as Map)['id'], task.domainId);
+      expect((snapshot['milestone'] as Map)['id'], task.milestoneId);
+    },
+  );
+
+  test('Run snapshot capture and persistence share one mutation lock', () {
+    final repository = CanonicalRepository(workspace);
+    final result = withRunScopeContextSnapshot(
+      workspace,
+      domainId: 'DOM-worker',
+      milestoneId: 'MLS-worker',
+      persist: (snapshot) {
+        final domain = repository.get(EntityKind.domain, 'DOM-worker')!;
+        expect(
+          () => Zone.root.run(
+            () => repository.update(
+              CanonicalEntity(
+                kind: domain.kind,
+                id: domain.id,
+                data: {...domain.data, 'title': 'Concurrent mutation'},
+              ),
+            ),
+          ),
+          throwsStateError,
+        );
+        return repository.create(
+          CanonicalEntity(
+            kind: EntityKind.run,
+            id: 'RUN-atomic-snapshot',
+            data: {
+              'schema_version': 1,
+              'id': 'RUN-atomic-snapshot',
+              'type': 'run',
+              'operation_id': 'OPR-atomic-snapshot',
+              'task_id': 'TSK-worker',
+              'status': 'running',
+              'created_at': '2026-07-25T00:00:00Z',
+              'scope_context_snapshot': snapshot,
+            },
+          ),
+        );
+      },
+    );
+
+    expect(result.data['scope_context_snapshot'], isA<Map>());
+  });
+
+  test('archived-scope start compensates and releases its claim', () async {
+    final task = _task();
+    final tasks = TaskRepository(workspace);
+    final repository = CanonicalRepository(workspace);
+    tasks.create(task);
+    final runId = ControlService(
+      workspace,
+      projection,
+    ).requestStart(task, 'OPR-archived-scope');
+    final milestone = repository.get(EntityKind.milestone, task.milestoneId)!;
+    repository.update(
+      CanonicalEntity(
+        kind: milestone.kind,
+        id: milestone.id,
+        data: {...milestone.data, 'status': 'archived'},
+        body: milestone.body,
+      ),
+    );
+    final runner = _CountingRunner();
+
+    final result = await TaskExecutionWorker(
+      workspace: workspace,
+      projection: projection,
+      runner: runner,
+      environmentId: 'ENV-worker',
+    ).runNext();
+
+    expect(result?.status, 'claim_conflict');
+    expect(runner.calls, 0);
+    expect(tasks.get(task.id)?.status, TaskStatus.ready);
+    expect(repository.get(EntityKind.run, runId)?.data['status'], 'requested');
+    expect(repository.list(EntityKind.claim).single.data['status'], 'released');
+    expect(
+      repository
+          .list(EntityKind.event)
+          .where((event) => event.data['event_type'] == 'start_compensated'),
+      hasLength(1),
+    );
   });
 
   test('pipeline rejects self reported success without process evidence', () {
@@ -330,6 +465,78 @@ void main() {
       expect(remote.releases, 1);
     }
   });
+
+  test('post-ACK projection failure still releases ownership', () async {
+    final task = _task();
+    TaskRepository(workspace).create(task);
+    final runId = ControlService(
+      workspace,
+      projection,
+    ).requestStart(task, 'OPR-post-ack-projection');
+    final runner = _CountingRunner();
+
+    final future = TaskExecutionWorker(
+      workspace: workspace,
+      projection: projection,
+      runner: runner,
+      environmentId: 'ENV-worker',
+      faultInjector: (stage) {
+        if (stage != WorkerStartStage.beforeDispositionAccepted) return;
+        File(
+          '${workspace.domains.path}/DOM-invalid/domain.md',
+        ).createSync(recursive: true);
+        File(
+          '${workspace.domains.path}/DOM-invalid/domain.md',
+        ).writeAsStringSync(
+          '---\n'
+          '{"schema_version":1,"id":"DOM-invalid","type":"domain",'
+          '"name":"Invalid"}\n'
+          '---\n',
+        );
+      },
+    ).runNext();
+
+    await expectLater(future, throwsA(isA<ContractViolation>()));
+    final canonical = CanonicalRepository(workspace);
+    expect(runner.calls, 0);
+    expect(canonical.get(EntityKind.run, runId)?.data['status'], 'failed');
+    expect(TaskRepository(workspace).get(task.id)?.status, TaskStatus.blocked);
+    expect(canonical.list(EntityKind.claim).single.data['status'], 'released');
+  });
+
+  test(
+    'post-ACK initial fence failure releases local and remote ownership',
+    () async {
+      final task = _task().copyWith(
+        executionScope: ExecutionScope.multiEnvironment,
+      );
+      TaskRepository(workspace).create(task);
+      ControlService(
+        workspace,
+        projection,
+      ).requestStart(task, 'OPR-post-ack-fence');
+      final remote = _MemoryRemoteClaims()..current = false;
+      final runner = _CountingRunner();
+
+      final result = await TaskExecutionWorker(
+        workspace: workspace,
+        projection: projection,
+        runner: runner,
+        environmentId: 'ENV-worker',
+        remoteClaims: remote,
+      ).runNext();
+
+      expect(result?.status, 'fenced_out');
+      expect(runner.calls, 0);
+      expect(
+        CanonicalRepository(
+          workspace,
+        ).list(EntityKind.claim).single.data['status'],
+        'released',
+      );
+      expect(remote.releases, 1);
+    },
+  );
 
   test('stale remote owner cannot append result or complete task', () async {
     final task = _task().copyWith(

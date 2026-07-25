@@ -110,6 +110,20 @@ void main() {
     );
     repository.create(
       const CanonicalEntity(
+        kind: EntityKind.milestone,
+        id: 'MLS-example',
+        data: {
+          'schema_version': 1,
+          'id': 'MLS-example',
+          'type': 'milestone',
+          'domain_id': 'DOM-example',
+          'title': 'Example milestone',
+          'status': 'active',
+        },
+      ),
+    );
+    repository.create(
+      const CanonicalEntity(
         kind: EntityKind.knowledge,
         id: 'KNW-example',
         data: {
