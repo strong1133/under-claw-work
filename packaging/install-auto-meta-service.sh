@@ -14,14 +14,24 @@ fi
 worklog_bin="${UNDER_CLAW_WORKLOG_BIN:-$default_worklog}"
 hermes_bin="${UNDER_CLAW_HERMES_BIN:-$(command -v hermes || true)}"
 hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+for value in "$workspace" "$environment_id" "$adapter_id" "$interval" \
+  "$install_root" "$worklog_bin" "$hermes_bin" "$hermes_home"; do
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || {
+    echo "Unit values may not contain newlines" >&2
+    exit 64
+  }
+done
 [[ "$(uname -s)" == Linux && -d /run/systemd/system ]] || {
   echo "Automatic service installation currently requires Linux systemd" >&2; exit 69;
 }
-[[ "$workspace" = /* && -d "$workspace/.git" ]] || {
-  echo "install-auto-meta-service requires an absolute Git workspace" >&2; exit 64;
+[[ "$workspace" = /* && -d "$workspace" ]] &&
+  [[ "$(git -C "$workspace" rev-parse --is-inside-work-tree 2>/dev/null || true)" == true ]] || {
+  echo "install-auto-meta-service requires an absolute Git workspace" >&2
+  exit 64
 }
 [[ -x "$watch_script" && -x "$worklog_bin" && -x "$hermes_bin" ]] || {
-  echo "Installed watcher, worklog, or Hermes executable is unavailable" >&2; exit 66;
+  echo "Installed watcher, worklog, or Hermes executable is unavailable" >&2
+  exit 66
 }
 [[ "$environment_id" =~ ^ENV-[A-Za-z0-9._-]+$ ]] || {
   echo "Invalid environment id" >&2; exit 64;

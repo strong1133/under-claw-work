@@ -11,11 +11,14 @@ if [[ ! -x "$default_worklog" ]]; then
   default_worklog="$(command -v worklog || true)"
 fi
 worklog_bin="${UNDER_CLAW_WORKLOG_BIN:-$default_worklog}"
-[[ "$workspace" = /* && -d "$workspace/.git" ]] || {
-  echo "auto-meta-watch requires an absolute Git workspace" >&2; exit 64;
+[[ "$workspace" = /* && -d "$workspace" ]] &&
+  [[ "$(git -C "$workspace" rev-parse --is-inside-work-tree 2>/dev/null || true)" == true ]] || {
+  echo "auto-meta-watch requires an absolute Git workspace" >&2
+  exit 64
 }
 [[ "$environment_id" =~ ^ENV-[A-Za-z0-9._-]+$ ]] || {
-  echo "Invalid environment id" >&2; exit 64;
+  echo "Invalid environment id" >&2
+  exit 64
 }
 [[ "$adapter_id" =~ ^[A-Za-z0-9._-]+$ ]] || {
   echo "Invalid adapter id" >&2; exit 64;
