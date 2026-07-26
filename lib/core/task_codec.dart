@@ -3,7 +3,7 @@ import 'package:yaml/yaml.dart';
 import 'models.dart';
 
 class TaskCodec {
-  static const currentSchemaVersion = 2;
+  static const currentSchemaVersion = 3;
 
   static WorkTask decode(String content) {
     final raw = loadYaml(content) as YamlMap;
@@ -14,8 +14,8 @@ class TaskCodec {
     final prompt = raw['prompt'] as YamlMap? ?? YamlMap();
     return WorkTask(
       id: raw['id'] as String,
-      domainId: raw['domain_id'] as String,
-      milestoneId: raw['milestone_id'] as String,
+      domainId: raw['domain_id'] as String? ?? '',
+      milestoneId: raw['milestone_id'] as String? ?? '',
       title: raw['title'] as String,
       status: TaskStatus.values.byName(raw['status'] as String? ?? 'draft'),
       promptDraft: prompt['draft'] as String? ?? '',
@@ -28,14 +28,27 @@ class TaskCodec {
       ),
       autoDeriveTasks: raw['auto_derive_tasks'] as bool? ?? false,
       autoFollowupTasks: raw['auto_followup_tasks'] as bool? ?? false,
+      autoAcceptGeneratedTasks:
+          raw['auto_accept_generated_tasks'] as bool? ?? false,
       maxGenerationDepth: raw['max_generation_depth'] as int? ?? 2,
-      targetEnvironment: raw['target_environment'] as String? ?? 'local',
+      targetEnvironment: schemaVersion < 3
+          ? _legacyEnvironment(raw['target_environment'])
+          : null,
+      targetEnvironmentIds: schemaVersion >= 3
+          ? _strings(raw, 'target_environment_ids')
+          : const [],
+      projectIds: _strings(raw, 'project_ids'),
+      modelSelectionKeys: _strings(raw, 'model_selection_keys'),
+      processingMode: TaskProcessingMode.values.byName(
+        raw['processing_mode'] as String? ?? 'manual',
+      ),
       executionScope: ExecutionScope.values.byName(
         // v1 predated this field. The conservative migration default is
         // multiEnvironment so legacy Tasks cannot bypass remote fencing.
         raw['execution_scope'] as String? ?? 'multiEnvironment',
       ),
       parentTaskId: raw['parent_task_id'] as String?,
+      relatedTaskIds: _strings(raw, 'related_task_ids'),
       alignedObjectiveIds:
           (raw['aligned_objective_ids'] as YamlList?)
               ?.whereType<String>()
@@ -66,16 +79,21 @@ class TaskCodec {
     return '''
 schema_version: $currentSchemaVersion
 id: ${task.id}
-domain_id: ${task.domainId}
-milestone_id: ${task.milestoneId}
+domain_id: ${task.hasDomain ? _scalar(task.domainId) : 'null'}
+milestone_id: ${task.hasMilestone ? _scalar(task.milestoneId) : 'null'}
 title: ${_scalar(task.title)}
 status: ${task.status.name}
 auto_derive_tasks: ${task.autoDeriveTasks}
 auto_followup_tasks: ${task.autoFollowupTasks}
+auto_accept_generated_tasks: ${task.autoAcceptGeneratedTasks}
 max_generation_depth: ${task.maxGenerationDepth}
-target_environment: ${_scalar(task.targetEnvironment)}
+processing_mode: ${task.processingMode.name}
+project_ids: ${_list(task.projectIds)}
+target_environment_ids: ${_list(task.effectiveTargetEnvironmentIds)}
+model_selection_keys: ${_list(task.modelSelectionKeys)}
 execution_scope: ${task.executionScope.name}
 parent_task_id: ${task.parentTaskId == null ? 'null' : _scalar(task.parentTaskId!)}
+related_task_ids: ${_list(task.relatedTaskIds)}
 aligned_objective_ids: ${_list(task.alignedObjectiveIds)}
 evidence_knowledge_ids: ${_list(task.evidenceKnowledgeIds)}
 source_reference_ids: ${_list(task.sourceReferenceIds)}
@@ -100,4 +118,18 @@ ${block(task.promptMeta)}
 
   static String _list(List<String> values) =>
       '[${values.map(_scalar).join(', ')}]';
+
+  static List<String> _strings(YamlMap raw, String field) {
+    final value = raw[field];
+    if (value == null) return const [];
+    if (value is! YamlList || value.any((item) => item is! String)) {
+      throw FormatException('$field must be a list of strings.');
+    }
+    return value.cast<String>();
+  }
+
+  static String? _legacyEnvironment(Object? value) {
+    final environmentId = value is String ? value : '';
+    return environmentId.startsWith('ENV-') ? environmentId : null;
+  }
 }

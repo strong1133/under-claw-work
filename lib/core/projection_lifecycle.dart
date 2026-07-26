@@ -29,7 +29,7 @@ class ProjectionResult {
 class ProjectionLifecycle {
   ProjectionLifecycle(this.workspace);
 
-  static const formatVersion = 1;
+  static const formatVersion = 2;
   final Workspace workspace;
 
   ProjectionResult rebuildIfNeeded({bool force = false}) {
@@ -112,12 +112,18 @@ class ProjectionLifecycle {
         );
         CREATE TABLE tasks (
           id TEXT PRIMARY KEY,
-          domain_id TEXT NOT NULL,
-          milestone_id TEXT NOT NULL,
+          domain_id TEXT,
+          milestone_id TEXT,
           title TEXT NOT NULL,
           status TEXT NOT NULL,
           meta_current INTEGER NOT NULL,
-          target_environment TEXT NOT NULL
+          target_environment TEXT NOT NULL,
+          processing_mode TEXT NOT NULL,
+          project_ids_json TEXT NOT NULL,
+          target_environment_ids_json TEXT NOT NULL,
+          model_selection_keys_json TEXT NOT NULL,
+          parent_task_id TEXT,
+          related_task_ids_json TEXT NOT NULL
         );
         CREATE TABLE canonical_entities (
           entity_type TEXT NOT NULL,
@@ -173,7 +179,7 @@ class ProjectionLifecycle {
         );
       ''');
       final taskInsert = database.prepare(
-        'INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       );
       final entityInsert = database.prepare(
         'INSERT INTO canonical_entities VALUES (?, ?, ?, ?, ?)',
@@ -185,12 +191,18 @@ class ProjectionLifecycle {
         for (final task in tasks) {
           taskInsert.execute([
             task.id,
-            task.domainId,
-            task.milestoneId,
+            task.hasDomain ? task.domainId : null,
+            task.hasMilestone ? task.milestoneId : null,
             task.title,
             task.status.name,
             task.isMetaCurrent ? 1 : 0,
             task.targetEnvironment,
+            task.processingMode.name,
+            jsonEncode(task.projectIds),
+            jsonEncode(task.effectiveTargetEnvironmentIds),
+            jsonEncode(task.modelSelectionKeys),
+            task.parentTaskId,
+            jsonEncode(task.relatedTaskIds),
           ]);
           entityInsert.execute([
             EntityKind.task.type,
@@ -199,18 +211,46 @@ class ProjectionLifecycle {
             task.status.name,
             '',
           ]);
-          relationInsert.execute([
-            EntityKind.task.type,
-            task.id,
-            'domain_id',
-            task.domainId,
-          ]);
-          relationInsert.execute([
-            EntityKind.task.type,
-            task.id,
-            'milestone_id',
-            task.milestoneId,
-          ]);
+          if (task.hasDomain) {
+            relationInsert.execute([
+              EntityKind.task.type,
+              task.id,
+              'domain_id',
+              task.domainId,
+            ]);
+          }
+          if (task.hasMilestone) {
+            relationInsert.execute([
+              EntityKind.task.type,
+              task.id,
+              'milestone_id',
+              task.milestoneId,
+            ]);
+          }
+          for (final project in task.projectIds) {
+            relationInsert.execute([
+              EntityKind.task.type,
+              task.id,
+              'project_ids',
+              project,
+            ]);
+          }
+          if (task.parentTaskId case final parent?) {
+            relationInsert.execute([
+              EntityKind.task.type,
+              task.id,
+              'parent_task_id',
+              parent,
+            ]);
+          }
+          for (final related in task.relatedTaskIds) {
+            relationInsert.execute([
+              EntityKind.task.type,
+              task.id,
+              'related_task_ids',
+              related,
+            ]);
+          }
           for (final objective in task.alignedObjectiveIds) {
             relationInsert.execute([
               EntityKind.task.type,

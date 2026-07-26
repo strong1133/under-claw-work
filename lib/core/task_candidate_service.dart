@@ -23,6 +23,7 @@ class TaskCandidate {
     required this.knowledgeIds,
     required this.referenceIds,
     required this.reason,
+    required this.relation,
     required this.depth,
     required this.fingerprint,
     required this.disposition,
@@ -37,6 +38,7 @@ class TaskCandidate {
   final List<String> knowledgeIds;
   final List<String> referenceIds;
   final String reason;
+  final GeneratedTaskRelation relation;
   final int depth;
   final String fingerprint;
   final CandidateDisposition disposition;
@@ -56,24 +58,24 @@ class TaskCandidateService {
     required List<String> knowledgeIds,
     required List<String> referenceIds,
     required String reason,
+    GeneratedTaskRelation relation = GeneratedTaskRelation.child,
   }) {
     final tasks = TaskRepository(workspace);
     final parent = tasks.get(parentTaskId);
     if (parent == null) throw StateError('Parent Task does not exist.');
-    if (!parent.autoDeriveTasks && !parent.autoFollowupTasks) {
-      throw StateError('Parent Task generation policy is disabled.');
+    if (relation == GeneratedTaskRelation.child && !parent.autoDeriveTasks) {
+      throw StateError('Parent Task child generation policy is disabled.');
+    }
+    if (relation == GeneratedTaskRelation.related &&
+        !parent.autoFollowupTasks) {
+      throw StateError('Parent Task related generation policy is disabled.');
     }
     if (title.trim().isEmpty || draft.trim().isEmpty || reason.trim().isEmpty) {
       throw const FormatException(
         'Candidate title, Draft and reason required.',
       );
     }
-    if (objectiveIds.isEmpty ||
-        (knowledgeIds.isEmpty && referenceIds.isEmpty)) {
-      throw const FormatException(
-        'Candidate requires an Objective and Knowledge or Reference evidence.',
-      );
-    }
+
     final depth = parent.generationDepth + 1;
     if (depth > parent.maxGenerationDepth) {
       throw StateError('Candidate exceeds maximum generation depth.');
@@ -103,6 +105,7 @@ class TaskCandidateService {
               ...([...objectiveIds]..sort()),
               ...([...knowledgeIds]..sort()),
               ...([...referenceIds]..sort()),
+              relation.name,
             ].join('\u0000'),
           ),
         )
@@ -120,6 +123,7 @@ class TaskCandidateService {
       knowledgeIds: _sorted(knowledgeIds),
       referenceIds: _sorted(referenceIds),
       reason: reason.trim(),
+      relation: relation,
       depth: depth,
       fingerprint: fingerprint,
       disposition: CandidateDisposition.pending,
@@ -147,20 +151,42 @@ class TaskCandidateService {
     }
     final parent = TaskRepository(workspace).get(candidate.parentTaskId);
     if (parent == null) throw StateError('Parent Task no longer exists.');
+    if (candidate.relation == GeneratedTaskRelation.child &&
+        !parent.autoDeriveTasks) {
+      throw StateError('Parent Task child generation policy is disabled.');
+    }
+    if (candidate.relation == GeneratedTaskRelation.related &&
+        !parent.autoFollowupTasks) {
+      throw StateError('Parent Task related generation policy is disabled.');
+    }
     final task = WorkTask(
       id: newId('TSK'),
       domainId: parent.domainId,
       milestoneId: parent.milestoneId,
       title: candidate.title,
-      status: TaskStatus.draft,
+      status: parent.processingMode == TaskProcessingMode.automatic
+          ? TaskStatus.metaRequested
+          : TaskStatus.writing,
       promptDraft: candidate.draft,
       promptMeta: '',
       promptDraftRevision: 1,
       promptMetaSourceRevision: 0,
       approval: PromptApproval.missing,
-      autoDeriveTasks: false,
-      targetEnvironment: parent.targetEnvironment,
-      parentTaskId: parent.id,
+      autoDeriveTasks: parent.autoDeriveTasks,
+      autoFollowupTasks: parent.autoFollowupTasks,
+      autoAcceptGeneratedTasks: parent.autoAcceptGeneratedTasks,
+      maxGenerationDepth: parent.maxGenerationDepth,
+      targetEnvironmentIds: parent.effectiveTargetEnvironmentIds,
+      projectIds: parent.projectIds,
+      modelSelectionKeys: parent.modelSelectionKeys,
+      processingMode: parent.processingMode,
+      executionScope: parent.executionScope,
+      parentTaskId: candidate.relation == GeneratedTaskRelation.child
+          ? parent.id
+          : null,
+      relatedTaskIds: candidate.relation == GeneratedTaskRelation.related
+          ? [parent.id]
+          : const [],
       alignedObjectiveIds: candidate.objectiveIds,
       evidenceKnowledgeIds: candidate.knowledgeIds,
       sourceReferenceIds: candidate.referenceIds,
@@ -210,6 +236,9 @@ class TaskCandidateService {
       knowledgeIds: strings('knowledge_ids'),
       referenceIds: strings('reference_ids'),
       reason: raw['reason'] as String,
+      relation: GeneratedTaskRelation.values.byName(
+        raw['relation'] as String? ?? 'child',
+      ),
       depth: raw['depth'] as int,
       fingerprint: raw['fingerprint'] as String,
       disposition: CandidateDisposition.values.byName(
@@ -236,6 +265,7 @@ class TaskCandidateService {
       'knowledge_ids': candidate.knowledgeIds,
       'reference_ids': candidate.referenceIds,
       'reason': candidate.reason,
+      'relation': candidate.relation.name,
       'depth': candidate.depth,
       'fingerprint': candidate.fingerprint,
       'disposition': candidate.disposition.name,
@@ -262,6 +292,7 @@ class TaskCandidateService {
     knowledgeIds: source.knowledgeIds,
     referenceIds: source.referenceIds,
     reason: source.reason,
+    relation: source.relation,
     depth: source.depth,
     fingerprint: source.fingerprint,
     disposition: disposition,

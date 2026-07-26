@@ -43,5 +43,11 @@ while :; do
     status=$?
     printf '%s auto_meta=error exit=%s\n' "$started" "$status" >&2
   fi
+  if output="$("$worklog_bin" task-automation-next "$workspace" 2>&1)"; then
+    printf '%s %s\n' "$started" "$output"
+  else
+    status=$?
+    printf '%s task_automation=error exit=%s\n' "$started" "$status" >&2
+  fi
   sleep "$interval"
 done

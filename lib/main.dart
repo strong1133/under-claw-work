@@ -14,6 +14,7 @@ import 'ui/match_screen.dart';
 import 'ui/memory_screen.dart';
 import 'ui/notion_screens.dart';
 import 'ui/notion_sync_port.dart';
+import 'ui/task_configuration_dialog.dart';
 import 'ui/workspace_shell.dart';
 
 void main() {
@@ -694,15 +695,55 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     });
   }
 
-  void _requestStart() {
+  Future<void> _requestStart() async {
     final task = _selected;
     if (task == null) return;
     try {
+      final environments = task.effectiveTargetEnvironmentIds;
+      if (environments.isEmpty) {
+        throw StateError('Select at least one execution Environment first.');
+      }
+      var selectedEnvironment = environments.first;
+      if (environments.length > 1) {
+        final accepted = await showDialog<bool>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Select execution Environment'),
+              content: DropdownButtonFormField<String>(
+                initialValue: selectedEnvironment,
+                items: [
+                  for (final id in environments)
+                    DropdownMenuItem(value: id, child: Text(id)),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => selectedEnvironment = value);
+                  }
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Request start'),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (accepted != true) return;
+      }
       final operationId = newId('OPR');
-      final runId = ControlService(
-        Workspace(_root!),
-        _projection!,
-      ).requestStart(task, operationId);
+      final runId = ControlService(Workspace(_root!), _projection!)
+          .requestStart(
+            task,
+            operationId,
+            targetEnvironmentId: selectedEnvironment,
+          );
       setState(() => _message = 'Start requested · $runId');
     } on StateError catch (error) {
       setState(() => _message = error.message.toString());
@@ -710,70 +751,94 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _createTask() async {
-    final domain = TextEditingController();
-    final milestone = TextEditingController();
-    final title = TextEditingController();
-    final environment = TextEditingController(text: 'ENV-local');
-    final accepted = await showDialog<bool>(
+    final configuration = await showDialog<TaskConfigurationDraft>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create Task'),
-        content: SizedBox(
-          width: 480,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: domain,
-                decoration: const InputDecoration(labelText: 'Domain ID'),
-              ),
-              TextField(
-                controller: milestone,
-                decoration: const InputDecoration(labelText: 'Milestone ID'),
-              ),
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Title'),
-              ),
-              TextField(
-                controller: environment,
-                decoration: const InputDecoration(labelText: 'Environment ID'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+      builder: (context) =>
+          TaskConfigurationDialog(workspace: Workspace(_root!)),
     );
-    if (accepted != true) return;
+    if (configuration == null) return;
     try {
       final task = TaskRepository(Workspace(_root!)).create(
         WorkTask(
           id: newId('TSK'),
-          domainId: domain.text.trim(),
-          milestoneId: milestone.text.trim(),
-          title: title.text.trim(),
-          status: TaskStatus.draft,
-          promptDraft: '',
+          domainId: configuration.domainId,
+          milestoneId: configuration.milestoneId,
+          title: configuration.title,
+          status: configuration.requestMeta
+              ? TaskStatus.metaRequested
+              : TaskStatus.writing,
+          promptDraft: configuration.promptDraft,
           promptMeta: '',
           promptDraftRevision: 1,
           promptMetaSourceRevision: 0,
           approval: PromptApproval.missing,
-          autoDeriveTasks: false,
-          targetEnvironment: environment.text.trim(),
+          autoDeriveTasks: configuration.autoDeriveTasks,
+          autoFollowupTasks: configuration.autoFollowupTasks,
+          autoAcceptGeneratedTasks: configuration.autoAcceptGeneratedTasks,
+          maxGenerationDepth: configuration.maxGenerationDepth,
+          projectIds: configuration.projectIds,
+          targetEnvironmentIds: configuration.environmentIds,
+          modelSelectionKeys: configuration.modelSelectionKeys,
+          processingMode: configuration.processingMode,
+          parentTaskId: configuration.parentTaskId,
+          relatedTaskIds: configuration.relatedTaskIds,
         ),
       );
       _refresh();
       setState(() => _selected = task);
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  Future<void> _editTaskConfiguration() async {
+    final task = _selected;
+    if (task == null) return;
+    final configuration = await showDialog<TaskConfigurationDraft>(
+      context: context,
+      builder: (context) =>
+          TaskConfigurationDialog(workspace: Workspace(_root!), task: task),
+    );
+    if (configuration == null) return;
+    try {
+      final updated = TaskRepository(Workspace(_root!)).configure(
+        task,
+        title: configuration.title,
+        domainId: configuration.domainId,
+        milestoneId: configuration.milestoneId,
+        projectIds: configuration.projectIds,
+        targetEnvironmentIds: configuration.environmentIds,
+        modelSelectionKeys: configuration.modelSelectionKeys,
+        processingMode: configuration.processingMode,
+        autoDeriveTasks: configuration.autoDeriveTasks,
+        autoFollowupTasks: configuration.autoFollowupTasks,
+        autoAcceptGeneratedTasks: configuration.autoAcceptGeneratedTasks,
+        maxGenerationDepth: configuration.maxGenerationDepth,
+        parentTaskId: configuration.parentTaskId,
+        relatedTaskIds: configuration.relatedTaskIds,
+      );
+      _refresh();
+      setState(() {
+        _selected = updated;
+        _message = 'Task configuration saved.';
+      });
+    } catch (error) {
+      setState(() => _message = error.toString());
+    }
+  }
+
+  void _requestMeta() {
+    final task = _selected;
+    if (task == null) return;
+    try {
+      final updated = TaskRepository(Workspace(_root!)).requestMeta(task);
+      _refresh();
+      setState(() {
+        _selected = updated;
+        _message = task.processingMode == TaskProcessingMode.automatic
+            ? 'Meta generation requested for the automatic worker.'
+            : 'Meta requested. Choose Generate Meta to run an adapter.';
+      });
     } catch (error) {
       setState(() => _message = error.toString());
     }
@@ -818,10 +883,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final task = _selected;
     if (task == null) return;
     try {
-      final updated = TaskRepository(
-        Workspace(_root!),
-      ).approveMeta(task).copyWith(status: TaskStatus.ready);
-      TaskRepository(Workspace(_root!)).update(updated);
+      final updated = TaskRepository(Workspace(_root!)).approveMeta(task);
       _refresh();
       setState(() => _selected = updated);
     } catch (error) {
@@ -880,9 +942,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _generateMeta() async {
-    final task = _selected;
+    var task = _selected;
     if (task == null || _root == null) return;
     final workspace = Workspace(_root!);
+    if ({TaskStatus.draft, TaskStatus.writing}.contains(task.status)) {
+      try {
+        task = TaskRepository(workspace).requestMeta(task);
+      } catch (error) {
+        setState(() => _message = 'Meta request blocked · $error');
+        return;
+      }
+    }
     late final List<InstalledRuntimeDescriptor> adapters;
     try {
       final registry = InstalledRuntimeRegistry(workspace);
@@ -982,71 +1052,6 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         service.reject(id);
         setState(() => _message = 'Candidate rejected.');
       }
-    } catch (error) {
-      setState(() => _message = error.toString());
-    }
-  }
-
-  Future<void> _editTaskPolicy() async {
-    final task = _selected;
-    if (task == null) return;
-    var derive = task.autoDeriveTasks;
-    var followup = task.autoFollowupTasks;
-    final depth = TextEditingController(text: '${task.maxGenerationDepth}');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Automatic Task policy'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SwitchListTile(
-                title: const Text('Generate derived Tasks'),
-                value: derive,
-                onChanged: (value) => setDialogState(() => derive = value),
-              ),
-              SwitchListTile(
-                title: const Text('Generate follow-up Tasks'),
-                value: followup,
-                onChanged: (value) => setDialogState(() => followup = value),
-              ),
-              TextField(
-                controller: depth,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Maximum generation depth',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved != true) return;
-    try {
-      final updated = TaskRepository(Workspace(_root!)).update(
-        task.copyWith(
-          autoDeriveTasks: derive,
-          autoFollowupTasks: followup,
-          maxGenerationDepth: int.parse(depth.text),
-        ),
-      );
-      _refresh();
-      setState(() {
-        _selected = updated;
-        _message = 'Automatic Task policy saved.';
-      });
     } catch (error) {
       setState(() => _message = error.toString());
     }
@@ -1262,13 +1267,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                           ).dispositionFor(requestId),
                           onStart: _requestStart,
                           onEditDraft: () => _editPrompt(meta: false),
+                          onRequestMeta: _requestMeta,
                           onGenerateMeta: _generateMeta,
                           onEditMeta: () => _editPrompt(meta: true),
                           onApproveMeta: _approveMeta,
                           onControl: _requestControl,
                           onWithdraw: _withdrawControl,
                           onCandidateDisposition: _disposeCandidate,
-                          onEditPolicy: _editTaskPolicy,
+                          onEditPolicy: _editTaskConfiguration,
                         ),
                 ),
               ],
@@ -1452,6 +1458,7 @@ class _TaskDetail extends StatelessWidget {
     required this.dispositionFor,
     required this.onStart,
     required this.onEditDraft,
+    required this.onRequestMeta,
     required this.onGenerateMeta,
     required this.onEditMeta,
     required this.onApproveMeta,
@@ -1469,6 +1476,7 @@ class _TaskDetail extends StatelessWidget {
   final CanonicalEntity? Function(String requestId) dispositionFor;
   final VoidCallback onStart;
   final VoidCallback onEditDraft;
+  final VoidCallback onRequestMeta;
   final VoidCallback onGenerateMeta;
   final VoidCallback onEditMeta;
   final VoidCallback onApproveMeta;
@@ -1484,13 +1492,32 @@ class _TaskDetail extends StatelessWidget {
       children: [
         Text(task.title, style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 8),
-        Text('${task.domainId} / ${task.milestoneId} / ${task.id}'),
+        Text(
+          '${task.hasDomain ? task.domainId : "No Domain"} / '
+          '${task.hasMilestone ? task.milestoneId : "No Milestone"} / '
+          '${task.id}',
+        ),
         const SizedBox(height: 24),
         Wrap(
           spacing: 8,
           children: [
             Chip(label: Text(task.status.name)),
-            Chip(label: Text('target: ${task.targetEnvironment}')),
+            Chip(label: Text('processing: ${task.processingMode.name}')),
+            Chip(
+              label: Text(
+                'environments: ${task.effectiveTargetEnvironmentIds.isEmpty ? "none" : task.effectiveTargetEnvironmentIds.join(", ")}',
+              ),
+            ),
+            Chip(
+              label: Text(
+                'projects: ${task.projectIds.isEmpty ? "none" : task.projectIds.join(", ")}',
+              ),
+            ),
+            Chip(
+              label: Text(
+                'models: ${task.modelSelectionKeys.isEmpty ? "runtime default" : task.modelSelectionKeys.join(", ")}',
+              ),
+            ),
             Chip(
               label: Text(
                 'derived: ${task.autoDeriveTasks ? "auto" : "manual"}',
@@ -1506,7 +1533,19 @@ class _TaskDetail extends StatelessWidget {
                 task.isMetaCurrent ? 'Meta approved' : 'Meta gate locked',
               ),
             ),
+            if (task.parentTaskId != null)
+              Chip(label: Text('parent: ${task.parentTaskId}')),
+            if (task.relatedTaskIds.isNotEmpty)
+              Chip(label: Text('related: ${task.relatedTaskIds.join(", ")}')),
           ],
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: onEditPolicy,
+            icon: const Icon(Icons.tune),
+            label: const Text('Edit Task configuration'),
+          ),
         ),
         const SizedBox(height: 24),
         Text('Prompt Draft', style: Theme.of(context).textTheme.titleMedium),
@@ -1522,6 +1561,19 @@ class _TaskDetail extends StatelessWidget {
         Wrap(
           spacing: 8,
           children: [
+            TextButton.icon(
+              key: const Key('request-meta'),
+              onPressed:
+                  task.promptDraft.trim().isNotEmpty &&
+                      {
+                        TaskStatus.draft,
+                        TaskStatus.writing,
+                      }.contains(task.status)
+                  ? onRequestMeta
+                  : null,
+              icon: const Icon(Icons.send),
+              label: const Text('Request Meta'),
+            ),
             TextButton.icon(
               key: const Key('generate-meta'),
               onPressed: task.promptDraft.trim().isEmpty
@@ -1552,7 +1604,7 @@ class _TaskDetail extends StatelessWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton.icon(
-            onPressed: task.isMetaCurrent ? onStart : null,
+            onPressed: task.isExecutionEligible ? onStart : null,
             icon: const Icon(Icons.play_arrow),
             label: const Text('Request start'),
           ),
@@ -1627,14 +1679,7 @@ class _TaskDetail extends StatelessWidget {
           'Generated Task candidates',
           style: Theme.of(context).textTheme.titleMedium,
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: onEditPolicy,
-            icon: const Icon(Icons.tune),
-            label: const Text('Edit automatic Task policy'),
-          ),
-        ),
+
         if (candidates.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 8),

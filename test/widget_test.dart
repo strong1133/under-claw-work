@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:under_claw_work/core/worklog_core.dart';
 import 'package:under_claw_work/main.dart';
+import 'package:under_claw_work/ui/task_configuration_dialog.dart';
 
 void main() {
   testWidgets('empty workspace renders native desktop shell', (tester) async {
@@ -127,4 +128,152 @@ void main() {
       'withdrawn',
     );
   });
+
+  testWidgets(
+    'Task dialog creates unscoped automatic Task with multiple env and model selections',
+    (tester) async {
+      final temporary = Directory.systemTemp.createTempSync(
+        'under-claw-widget-',
+      );
+      addTearDown(() => temporary.deleteSync(recursive: true));
+      final workspace = Workspace(temporary)..ensureLayout();
+      final environments = EnvironmentService(workspace);
+      final macbook = environments.register(
+        identity: const EnvironmentIdentity(
+          machineKey: 'MK-widgetmacbook',
+          os: 'macos',
+          architecture: 'arm64',
+        ),
+        alias: 'MacBook',
+        kind: 'desktop',
+        capabilities: const ['git'],
+      );
+      final astro = environments.register(
+        identity: const EnvironmentIdentity(
+          machineKey: 'MK-widgetastro',
+          os: 'linux',
+          architecture: 'x64',
+        ),
+        alias: 'astro-hermes',
+        kind: 'agent_runtime',
+        capabilities: const ['git'],
+      );
+      final bindings = HostBindingRegistry(workspace);
+      for (final environment in [macbook, astro]) {
+        bindings.set(
+          HostScopeBinding(
+            environmentId: environment.id,
+            domainId: '',
+            modelBindings: const {
+              'primary': 'provider/primary-model',
+              'reviewer': 'provider/reviewer-model',
+            },
+          ),
+        );
+      }
+
+      TaskConfigurationDraft? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  result = await showDialog<TaskConfigurationDraft>(
+                    context: context,
+                    builder: (context) =>
+                        TaskConfigurationDialog(workspace: workspace),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('task-title')),
+        'Portable task',
+      );
+      await tester.enterText(
+        find.byKey(const Key('task-draft')),
+        'Draft prompt',
+      );
+
+      await tester.tap(find.text('Execution Environments (0)'));
+      await tester.pumpAndSettle();
+      final dialogList = find.byType(Scrollable).last;
+      final macbookOption = find.textContaining('MacBook ·');
+      await tester.scrollUntilVisible(
+        macbookOption,
+        80,
+        scrollable: dialogList,
+      );
+      tester
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'MacBook · ${macbook.id}'),
+          )
+          .onChanged!(true);
+      tester
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'astro-hermes · ${astro.id}'),
+          )
+          .onChanged!(true);
+      await tester.pumpAndSettle();
+
+      final modelHeader = find.text('Portable model selections (0)');
+      await tester.scrollUntilVisible(modelHeader, 80, scrollable: dialogList);
+      await tester.tap(modelHeader);
+      await tester.pumpAndSettle();
+      final primary = find.text('primary');
+      await tester.scrollUntilVisible(primary, 80, scrollable: dialogList);
+      tester
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'primary'),
+          )
+          .onChanged!(true);
+      tester
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'reviewer'),
+          )
+          .onChanged!(true);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('task-processing-mode')),
+        100,
+        scrollable: dialogList,
+      );
+      tester
+          .widget<DropdownButtonFormField<TaskProcessingMode>>(
+            find.byKey(const Key('task-processing-mode')),
+          )
+          .onChanged!(TaskProcessingMode.automatic);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('task-request-meta')),
+        100,
+        scrollable: dialogList,
+      );
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('task-request-meta')))
+          .onChanged!(true);
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('save-task-configuration')),
+          )
+          .onPressed!();
+      await tester.pumpAndSettle();
+
+      expect(result, isNotNull);
+      expect(result!.domainId, isEmpty);
+      expect(result!.milestoneId, isEmpty);
+      expect(result!.environmentIds, [astro.id, macbook.id]..sort());
+      expect(result!.modelSelectionKeys, ['primary', 'reviewer']);
+      expect(result!.processingMode, TaskProcessingMode.automatic);
+      expect(result!.requestMeta, isTrue);
+    },
+  );
 }

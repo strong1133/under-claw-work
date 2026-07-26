@@ -229,14 +229,17 @@ void main() {
       workspace: workspace,
       environmentId: 'ENV-astro',
       adapterId: 'test-meta',
-      claims: _FakeClaims(throwIsCurrentAt: 2),
+      claims: _FakeClaims(throwIsCurrentAt: 3),
       generator: MetaPromptService(workspace, runtimes: runtimes),
       publisher: _RecordingPublisher(),
     );
 
     await expectLater(worker.runNext(), throwsStateError);
 
-    expect(TaskRepository(workspace).get(task.id)!.promptMeta, isEmpty);
+    final current = TaskRepository(workspace).get(task.id)!;
+    expect(current.promptMeta, isEmpty);
+    expect(current.status, TaskStatus.metaRequested);
+    expect(AutoMetaWorker.isEligible(current), isTrue);
     _expectOnlyStartAudit(workspace);
   });
 
@@ -326,6 +329,29 @@ void main() {
       }
     }
   });
+
+  test(
+    'discarded generated Meta remains eligible for automatic retry',
+    () async {
+      final task = _task();
+      TaskRepository(workspace).create(task);
+      final worker = AutoMetaWorker(
+        workspace: workspace,
+        environmentId: 'ENV-astro',
+        adapterId: 'test-meta',
+        claims: _FakeClaims(throwIsCurrentAt: 2),
+        generator: MetaPromptService(workspace, runtimes: runtimes),
+        publisher: _RecordingPublisher(),
+      );
+
+      await expectLater(worker.runNext(), throwsStateError);
+
+      final current = TaskRepository(workspace).get(task.id)!;
+      expect(current.promptMeta, isEmpty);
+      expect(current.status, TaskStatus.metaRequested);
+      expect(AutoMetaWorker.isEligible(current), isTrue);
+    },
+  );
 }
 
 void _expectOnlyStartAudit(Workspace workspace) {
@@ -504,12 +530,13 @@ WorkTask _task() => const WorkTask(
   domainId: 'DOM-auto',
   milestoneId: 'MLS-auto',
   title: 'Auto Meta task',
-  status: TaskStatus.draft,
+  status: TaskStatus.metaRequested,
   promptDraft: 'Draft request',
   promptMeta: '',
   promptDraftRevision: 1,
   promptMetaSourceRevision: 0,
   approval: PromptApproval.missing,
   autoDeriveTasks: false,
+  processingMode: TaskProcessingMode.automatic,
   targetEnvironment: 'ENV-astro',
 );

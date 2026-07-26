@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'canonical_repository.dart';
+import 'environment_service.dart';
 import 'id.dart';
 import 'models.dart';
 import 'projection.dart';
@@ -12,8 +13,17 @@ class ControlService {
   final Workspace workspace;
   final ProjectionStore projection;
 
-  String requestStart(WorkTask task, String operationId) {
-    return request(task, ControlCommand.start, operationId: operationId);
+  String requestStart(
+    WorkTask task,
+    String operationId, {
+    String? targetEnvironmentId,
+  }) {
+    return request(
+      task,
+      ControlCommand.start,
+      operationId: operationId,
+      targetEnvironmentId: targetEnvironmentId,
+    );
   }
 
   String request(
@@ -22,6 +32,7 @@ class ControlService {
     required String operationId,
     String? runId,
     String actorId = 'local-user',
+    String? targetEnvironmentId,
   }) {
     if (command == ControlCommand.start && !task.isMetaCurrent) {
       throw StateError('Task Meta Prompt is missing, stale, or unapproved.');
@@ -33,6 +44,26 @@ class ControlService {
       throw StateError(
         '${command.name} is not valid while Task is ${task.status.name}.',
       );
+    }
+    final selectedEnvironment = targetEnvironmentId ?? task.targetEnvironment;
+    if (command == ControlCommand.start) {
+      if (selectedEnvironment.isEmpty) {
+        throw StateError(
+          'Select a target Environment before requesting start.',
+        );
+      }
+      if (!task.effectiveTargetEnvironmentIds.contains(selectedEnvironment)) {
+        throw StateError('Start target is not selected on this Task.');
+      }
+      final environment = EnvironmentService(
+        workspace,
+      ).get(selectedEnvironment);
+      if ((environment == null || !environment.isActive) &&
+          !task.usesLegacyTargetEnvironment) {
+        throw StateError(
+          'Start target Environment does not exist or is not active.',
+        );
+      }
     }
     if (command != ControlCommand.start && runId == null) {
       throw StateError('${command.name} requires a run id.');
@@ -75,9 +106,10 @@ class ControlService {
             'command': command.name,
             'expected_task_revision': task.promptDraftRevision,
             'control_sequence': controlSequence,
-            'target_environment_id': task.targetEnvironment,
+            'target_environment_id': selectedEnvironment,
+            'model_selection_keys': task.modelSelectionKeys,
             'requested_by': {'actor_type': 'user', 'actor_id': actorId},
-            'requested_from_environment_id': task.targetEnvironment,
+            'requested_from_environment_id': selectedEnvironment,
             'idempotency_key': operationId,
             'reserved_run_id': command == ControlCommand.start
                 ? reservedRunId

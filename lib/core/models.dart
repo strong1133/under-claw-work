@@ -4,6 +4,9 @@ import 'package:crypto/crypto.dart';
 
 enum TaskStatus {
   draft,
+  writing,
+  metaRequested,
+  metaReview,
   ready,
   claimed,
   running,
@@ -19,11 +22,18 @@ enum ControlCommand { start, pause, resume, cancel, complete }
 
 enum ExecutionScope { singleMachine, multiEnvironment }
 
+/// Whether a ready Task waits for an explicit request or may be scheduled by
+/// the local automation watcher. Meta approval remains an explicit governance
+/// gate in both modes.
+enum TaskProcessingMode { manual, automatic }
+
+enum GeneratedTaskRelation { child, related }
+
 class WorkTask {
   const WorkTask({
     required this.id,
-    required this.domainId,
-    required this.milestoneId,
+    this.domainId = '',
+    this.milestoneId = '',
     required this.title,
     required this.status,
     required this.promptDraft,
@@ -34,10 +44,16 @@ class WorkTask {
     required this.approval,
     required this.autoDeriveTasks,
     this.autoFollowupTasks = false,
+    this.autoAcceptGeneratedTasks = false,
     this.maxGenerationDepth = 2,
-    required this.targetEnvironment,
+    String? targetEnvironment,
+    this.targetEnvironmentIds = const [],
+    this.projectIds = const [],
+    this.modelSelectionKeys = const [],
+    this.processingMode = TaskProcessingMode.manual,
     this.executionScope = ExecutionScope.multiEnvironment,
     this.parentTaskId,
+    this.relatedTaskIds = const [],
     this.alignedObjectiveIds = const [],
     this.evidenceKnowledgeIds = const [],
     this.sourceReferenceIds = const [],
@@ -45,7 +61,7 @@ class WorkTask {
     this.generationFingerprint,
     this.createdAutomatically = false,
     this.legacyIds = const [],
-  });
+  }) : _legacyTargetEnvironment = targetEnvironment;
 
   final String id;
   final String domainId;
@@ -60,10 +76,16 @@ class WorkTask {
   final PromptApproval approval;
   final bool autoDeriveTasks;
   final bool autoFollowupTasks;
+  final bool autoAcceptGeneratedTasks;
   final int maxGenerationDepth;
-  final String targetEnvironment;
+  final String? _legacyTargetEnvironment;
+  final List<String> targetEnvironmentIds;
+  final List<String> projectIds;
+  final List<String> modelSelectionKeys;
+  final TaskProcessingMode processingMode;
   final ExecutionScope executionScope;
   final String? parentTaskId;
+  final List<String> relatedTaskIds;
   final List<String> alignedObjectiveIds;
   final List<String> evidenceKnowledgeIds;
   final List<String> sourceReferenceIds;
@@ -72,6 +94,22 @@ class WorkTask {
   final bool createdAutomatically;
   final List<String> legacyIds;
 
+  bool get hasDomain => domainId.isNotEmpty;
+  bool get hasMilestone => milestoneId.isNotEmpty;
+
+  /// Compatibility view for v1/v2 call sites that selected exactly one host.
+  String get targetEnvironment =>
+      effectiveTargetEnvironmentIds.firstOrNull ?? '';
+
+  bool get usesLegacyTargetEnvironment => _legacyTargetEnvironment != null;
+
+  List<String> get effectiveTargetEnvironmentIds {
+    final ids = <String>{...targetEnvironmentIds};
+    final legacy = _legacyTargetEnvironment;
+    if (legacy != null && legacy.isNotEmpty) ids.add(legacy);
+    return ids.toList(growable: false);
+  }
+
   bool get isMetaCurrent =>
       promptMeta.isNotEmpty &&
       promptMetaSourceRevision == promptDraftRevision &&
@@ -79,6 +117,8 @@ class WorkTask {
       promptMetaSourceSha256 ==
           sha256.convert(utf8.encode(promptDraft)).toString() &&
       approval == PromptApproval.approved;
+
+  bool get isExecutionEligible => status == TaskStatus.ready && isMetaCurrent;
 
   WorkTask copyWith({
     String? title,
@@ -91,10 +131,16 @@ class WorkTask {
     PromptApproval? approval,
     bool? autoDeriveTasks,
     bool? autoFollowupTasks,
+    bool? autoAcceptGeneratedTasks,
     int? maxGenerationDepth,
     String? targetEnvironment,
+    List<String>? targetEnvironmentIds,
+    List<String>? projectIds,
+    List<String>? modelSelectionKeys,
+    TaskProcessingMode? processingMode,
     ExecutionScope? executionScope,
     String? parentTaskId,
+    List<String>? relatedTaskIds,
     List<String>? alignedObjectiveIds,
     List<String>? evidenceKnowledgeIds,
     List<String>? sourceReferenceIds,
@@ -119,10 +165,19 @@ class WorkTask {
       approval: approval ?? this.approval,
       autoDeriveTasks: autoDeriveTasks ?? this.autoDeriveTasks,
       autoFollowupTasks: autoFollowupTasks ?? this.autoFollowupTasks,
+      autoAcceptGeneratedTasks:
+          autoAcceptGeneratedTasks ?? this.autoAcceptGeneratedTasks,
       maxGenerationDepth: maxGenerationDepth ?? this.maxGenerationDepth,
-      targetEnvironment: targetEnvironment ?? this.targetEnvironment,
+      targetEnvironment:
+          targetEnvironment ??
+          (targetEnvironmentIds == null ? _legacyTargetEnvironment : null),
+      targetEnvironmentIds: targetEnvironmentIds ?? this.targetEnvironmentIds,
+      projectIds: projectIds ?? this.projectIds,
+      modelSelectionKeys: modelSelectionKeys ?? this.modelSelectionKeys,
+      processingMode: processingMode ?? this.processingMode,
       executionScope: executionScope ?? this.executionScope,
       parentTaskId: parentTaskId ?? this.parentTaskId,
+      relatedTaskIds: relatedTaskIds ?? this.relatedTaskIds,
       alignedObjectiveIds: alignedObjectiveIds ?? this.alignedObjectiveIds,
       evidenceKnowledgeIds: evidenceKnowledgeIds ?? this.evidenceKnowledgeIds,
       sourceReferenceIds: sourceReferenceIds ?? this.sourceReferenceIds,
@@ -159,11 +214,13 @@ class SkillInvocation {
     this.runId,
     this.round, {
     this.parentSkillId,
+    this.modelBindings = const {},
   });
   final String skillId;
   final String runId;
   final int round;
   final String? parentSkillId;
+  final Map<String, String> modelBindings;
 }
 
 /// Evidence observed by Core around a runner process, never asserted by the

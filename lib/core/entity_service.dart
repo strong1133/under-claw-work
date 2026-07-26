@@ -206,14 +206,20 @@ class EntityService {
   ContextPack buildContext(String taskId) {
     final task = TaskRepository(workspace).get(taskId);
     if (task == null) throw StateError('Task does not exist: $taskId');
-    final domain = repository.get(EntityKind.domain, task.domainId);
-    final milestone = repository.get(EntityKind.milestone, task.milestoneId);
-    if (domain == null || domain.data['status'] != 'active') {
+    final domain = task.hasDomain
+        ? repository.get(EntityKind.domain, task.domainId)
+        : null;
+    final milestone = task.hasMilestone
+        ? repository.get(EntityKind.milestone, task.milestoneId)
+        : null;
+    if (task.hasDomain &&
+        (domain == null || domain.data['status'] != 'active')) {
       throw StateError('Task Domain is not active: ${task.domainId}');
     }
-    if (milestone == null ||
-        milestone.data['status'] != 'active' ||
-        milestone.data['domain_id'] != task.domainId) {
+    if (task.hasMilestone &&
+        (milestone == null ||
+            milestone.data['status'] != 'active' ||
+            milestone.data['domain_id'] != task.domainId)) {
       throw StateError('Task Milestone is not active in its Domain.');
     }
     final entities = [
@@ -300,8 +306,14 @@ class EntityService {
     if (milestoneIds.isNotEmpty) {
       return milestoneIds.contains(task.milestoneId);
     }
-    return _contains(source, 'domain_ids', task.domainId) ||
-        source['domain_id'] == task.domainId;
+    final domainIds = source['domain_ids'];
+    final hasDomainScope =
+        (domainIds is List && domainIds.isNotEmpty) ||
+        source['domain_id'] != null;
+    if (!hasDomainScope) return true;
+    return task.hasDomain &&
+        (_contains(source, 'domain_ids', task.domainId) ||
+            source['domain_id'] == task.domainId);
   }
 
   static const _editableKinds = {

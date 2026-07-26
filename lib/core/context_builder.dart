@@ -60,14 +60,20 @@ class ContextPackBuilder {
     }
     final task = tasks.get(taskId);
     if (task == null) throw StateError('Task does not exist: $taskId');
-    final domain = repository.get(EntityKind.domain, task.domainId);
-    final milestone = repository.get(EntityKind.milestone, task.milestoneId);
-    if (domain == null || domain.data['status'] != 'active') {
+    final domain = task.hasDomain
+        ? repository.get(EntityKind.domain, task.domainId)
+        : null;
+    final milestone = task.hasMilestone
+        ? repository.get(EntityKind.milestone, task.milestoneId)
+        : null;
+    if (task.hasDomain &&
+        (domain == null || domain.data['status'] != 'active')) {
       throw StateError('Task Domain is not active: ${task.domainId}');
     }
-    if (milestone == null ||
-        milestone.data['status'] != 'active' ||
-        milestone.data['domain_id'] != task.domainId) {
+    if (task.hasMilestone &&
+        (milestone == null ||
+            milestone.data['status'] != 'active' ||
+            milestone.data['domain_id'] != task.domainId)) {
       throw StateError('Task Milestone is not active in its Domain.');
     }
     final relations = workspace.taskRelations(task.id).existsSync()
@@ -91,8 +97,36 @@ class ContextPackBuilder {
         updatedAt: '',
       ),
     ];
-    candidates.add(_fromEntity(domain, 'task.domain', 0));
-    candidates.add(_fromEntity(milestone, 'task.milestone', 0));
+    if (domain != null) candidates.add(_fromEntity(domain, 'task.domain', 0));
+    if (milestone != null) {
+      candidates.add(_fromEntity(milestone, 'task.milestone', 0));
+    }
+    for (final projectId in task.projectIds) {
+      final project = repository.get(EntityKind.project, projectId);
+      if (project != null && project.data['status'] == 'active') {
+        candidates.add(_fromEntity(project, 'task.project', 0));
+      }
+    }
+    for (final relation in <(String, String?)>[
+      ('task.parent', task.parentTaskId),
+      ...task.relatedTaskIds.map((id) => ('task.related', id)),
+    ]) {
+      final related = relation.$2 == null ? null : tasks.get(relation.$2!);
+      if (related == null) continue;
+      candidates.add(
+        _Candidate(
+          id: related.id,
+          type: 'task',
+          content:
+              '${related.title}\n${related.isMetaCurrent ? related.promptMeta : related.promptDraft}',
+          provenance: relation.$1,
+          distance: 0,
+          sectionOrder: 3,
+          importance: 90,
+          updatedAt: '',
+        ),
+      );
+    }
 
     final graphEntities = [
       ...repository.list(EntityKind.objective),

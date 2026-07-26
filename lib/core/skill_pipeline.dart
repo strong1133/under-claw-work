@@ -14,6 +14,7 @@ class CandidateProposal {
     required this.knowledgeIds,
     required this.referenceIds,
     required this.reason,
+    this.relation = GeneratedTaskRelation.child,
   });
 
   final String title;
@@ -22,6 +23,7 @@ class CandidateProposal {
   final List<String> knowledgeIds;
   final List<String> referenceIds;
   final String reason;
+  final GeneratedTaskRelation relation;
 }
 
 class OrchestrationResult {
@@ -65,6 +67,7 @@ class SkillPipeline {
     this.projection,
     this.runner, {
     this.environmentId = 'ENV-local',
+    this.modelBindings = const {},
     this.manageClaim = true,
     this.beforeCanonicalWrite,
   });
@@ -78,6 +81,7 @@ class SkillPipeline {
   final ProjectionStore projection;
   final RunnerAdapter runner;
   final String environmentId;
+  final Map<String, String> modelBindings;
   final bool manageClaim;
   final Future<void> Function()? beforeCanonicalWrite;
 
@@ -91,8 +95,7 @@ class SkillPipeline {
     if (existingRun?.data['scope_context_snapshot'] == null) {
       withRunScopeContextSnapshot(
         projection.workspace,
-        domainId: task.domainId,
-        milestoneId: task.milestoneId,
+        task: task,
         persist: (scopeContextSnapshot) {
           final currentRun = repository.get(EntityKind.run, runId);
           if (currentRun == null) {
@@ -130,7 +133,12 @@ class SkillPipeline {
         },
       );
     }
-    final root = SkillInvocation(orchestrator, runId, 0);
+    final root = SkillInvocation(
+      orchestrator,
+      runId,
+      0,
+      modelBindings: modelBindings,
+    );
     final claims = ClaimService(projection.workspace, projection);
     final claim = manageClaim
         ? claims.acquire(
@@ -232,23 +240,25 @@ class SkillPipeline {
       ),
     );
     final generatedCandidateIds = <String>[];
+    final generatedTaskIds = <String>[];
     if (task.autoDeriveTasks || task.autoFollowupTasks) {
       final candidates = TaskCandidateService(projection.workspace);
       for (final proposal in result.candidateProposals) {
         await beforeCanonicalWrite?.call();
-        generatedCandidateIds.add(
-          candidates
-              .propose(
-                parentTaskId: task.id,
-                title: proposal.title,
-                draft: proposal.draft,
-                objectiveIds: proposal.objectiveIds,
-                knowledgeIds: proposal.knowledgeIds,
-                referenceIds: proposal.referenceIds,
-                reason: proposal.reason,
-              )
-              .id,
+        final candidate = candidates.propose(
+          parentTaskId: task.id,
+          title: proposal.title,
+          draft: proposal.draft,
+          objectiveIds: proposal.objectiveIds,
+          knowledgeIds: proposal.knowledgeIds,
+          referenceIds: proposal.referenceIds,
+          reason: proposal.reason,
+          relation: proposal.relation,
         );
+        generatedCandidateIds.add(candidate.id);
+        if (task.autoAcceptGeneratedTasks) {
+          generatedTaskIds.add(candidates.accept(candidate.id).id);
+        }
       }
     } else if (result.candidateProposals.isNotEmpty) {
       throw StateError('Runner proposed Tasks while generation policy is off.');
@@ -261,6 +271,7 @@ class SkillPipeline {
       ...result.eventIds.map((id) => ('event', id)),
       ...result.followUpTaskIds.map((id) => ('follow_up_task', id)),
       ...generatedCandidateIds.map((id) => ('task_candidate', id)),
+      ...generatedTaskIds.map((id) => ('generated_task', id)),
     ]) {
       database.execute(
         'INSERT INTO knowledge_events (id, run_id, entity_type, entity_ref) '

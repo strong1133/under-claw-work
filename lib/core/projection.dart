@@ -27,12 +27,18 @@ class ProjectionStore {
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY,
-          domain_id TEXT NOT NULL,
-          milestone_id TEXT NOT NULL,
+          domain_id TEXT,
+          milestone_id TEXT,
           title TEXT NOT NULL,
           status TEXT NOT NULL,
           meta_current INTEGER NOT NULL,
-          target_environment TEXT NOT NULL
+          target_environment TEXT NOT NULL,
+          processing_mode TEXT NOT NULL,
+          project_ids_json TEXT NOT NULL,
+          target_environment_ids_json TEXT NOT NULL,
+          model_selection_keys_json TEXT NOT NULL,
+          parent_task_id TEXT,
+          related_task_ids_json TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS operations (
           operation_id TEXT PRIMARY KEY,

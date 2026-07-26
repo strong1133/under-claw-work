@@ -5,6 +5,7 @@ import 'claim_service.dart';
 import 'control_service.dart';
 import 'git_remote_claim_service.dart';
 import 'git_sync_service.dart';
+import 'host_binding_registry.dart';
 import 'id.dart';
 import 'models.dart';
 import 'projection.dart';
@@ -101,6 +102,12 @@ class TaskExecutionWorker {
     final taskRepository = TaskRepository(workspace);
     final task = taskRepository.get(taskId);
     if (task == null) throw StateError('Task does not exist: $taskId');
+    final modelBindings = HostBindingRegistry(workspace).resolveModels(
+      environmentId: environmentId,
+      domainId: task.domainId,
+      milestoneId: task.hasMilestone ? task.milestoneId : null,
+      selectionKeys: task.modelSelectionKeys,
+    );
 
     final controls = ControlService(workspace, projection);
     final existingDisposition = controls.dispositionFor(requestId);
@@ -174,8 +181,7 @@ class TaskExecutionWorker {
       if (runBeforeStart.data['scope_context_snapshot'] == null) {
         withRunScopeContextSnapshot(
           workspace,
-          domainId: task.domainId,
-          milestoneId: task.milestoneId,
+          task: task,
           persist: (snapshot) => _updateRun(repository, runId, 'running', {
             ...runFields,
             'scope_context_snapshot': snapshot,
@@ -253,6 +259,7 @@ class TaskExecutionWorker {
         projection,
         runner,
         environmentId: environmentId,
+        modelBindings: modelBindings,
         manageClaim: false,
         beforeCanonicalWrite: requireCurrentFence,
       ).execute(task, runId).whenComplete(() => pipelineFinished = true);

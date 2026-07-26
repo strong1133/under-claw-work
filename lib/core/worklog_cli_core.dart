@@ -39,6 +39,7 @@ export 'scope_context_resolver.dart';
 export 'setup_service.dart';
 export 'skill_pipeline.dart';
 export 'task_candidate_service.dart';
+export 'task_automation_service.dart';
 export 'task_codec.dart';
 export 'task_repository.dart';
 export 'workspace.dart';

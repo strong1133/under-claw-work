@@ -104,14 +104,20 @@ class ProcessRunnerAdapter implements CancellableRunnerAdapter {
     final startedAt = DateTime.now().toUtc();
     final process = await Process.start(
       executable,
-      arguments
-          .map(
-            (value) => value
-                .replaceAll('{skill_id}', invocation.skillId)
-                .replaceAll('{run_id}', invocation.runId)
-                .replaceAll('{round}', invocation.round.toString()),
-          )
-          .toList(),
+      arguments.map((value) {
+        var expanded = value
+            .replaceAll('{skill_id}', invocation.skillId)
+            .replaceAll('{run_id}', invocation.runId)
+            .replaceAll('{round}', invocation.round.toString())
+            .replaceAll(
+              '{model_bindings_json}',
+              jsonEncode(invocation.modelBindings),
+            );
+        for (final entry in invocation.modelBindings.entries) {
+          expanded = expanded.replaceAll('{model.${entry.key}}', entry.value);
+        }
+        return expanded;
+      }).toList(),
       workingDirectory: workingDirectory,
       runInShell: false,
     );
@@ -265,6 +271,9 @@ class ProcessRunnerAdapter implements CancellableRunnerAdapter {
         knowledgeIds: _strings(raw['knowledge_ids']),
         referenceIds: _strings(raw['reference_ids']),
         reason: raw['reason'] as String,
+        relation: GeneratedTaskRelation.values.byName(
+          raw['relation'] as String? ?? 'child',
+        ),
       );
     }).toList();
   }

@@ -429,11 +429,14 @@ class WorklogContractValidator {
     if (!task.id.startsWith('TSK-')) {
       throw ContractViolation(task.id, 'id', 'must use TSK- prefix');
     }
-    if (!task.domainId.startsWith('DOM-')) {
+    if (task.hasDomain && !task.domainId.startsWith('DOM-')) {
       throw ContractViolation(task.id, 'domain_id', 'must use DOM- prefix');
     }
-    if (!task.milestoneId.startsWith('MLS-')) {
+    if (task.hasMilestone && !task.milestoneId.startsWith('MLS-')) {
       throw ContractViolation(task.id, 'milestone_id', 'must use MLS- prefix');
+    }
+    if (task.hasMilestone && !task.hasDomain) {
+      throw ContractViolation(task.id, 'milestone_id', 'requires domain_id');
     }
     if (task.title.trim().isEmpty) {
       throw ContractViolation(task.id, 'title', 'must not be empty');
@@ -451,11 +454,12 @@ class WorklogContractValidator {
       );
     }
     if (task.createdAutomatically &&
-        (task.parentTaskId == null || task.alignedObjectiveIds.isEmpty)) {
+        task.parentTaskId == null &&
+        task.relatedTaskIds.isEmpty) {
       throw ContractViolation(
         task.id,
         'generation',
-        'automatic Task requires parent and aligned Objective',
+        'automatic Task requires parent or related Task',
       );
     }
   }

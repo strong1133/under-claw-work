@@ -105,10 +105,8 @@ class AutoMetaWorker {
 
   static bool isEligible(WorkTask task) {
     if (task.promptDraft.trim().isEmpty) return false;
-    if (task.status == TaskStatus.completed ||
-        task.status == TaskStatus.cancelled ||
-        task.status == TaskStatus.running ||
-        task.status == TaskStatus.claimed) {
+    if (task.processingMode != TaskProcessingMode.automatic ||
+        task.status != TaskStatus.metaRequested) {
       return false;
     }
     final sourceHashChanged =
@@ -319,6 +317,7 @@ class AutoMetaWorker {
         promptMetaSourceRevision: 0,
         promptMetaSourceSha256: '',
         approval: PromptApproval.stale,
+        status: TaskStatus.metaRequested,
       ),
     );
   }

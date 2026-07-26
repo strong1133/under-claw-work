@@ -1,5 +1,6 @@
 export 'agent_registry_service.dart';
 export 'auth.dart';
+export 'auto_meta_worker.dart';
 export 'canonical_repository.dart';
 export 'canonical_secret_verifier.dart';
 export 'canonical_sync_service.dart';
@@ -35,6 +36,7 @@ export 'schema_validator.dart';
 export 'scope_configuration.dart';
 export 'scope_context_resolver.dart';
 export 'task_codec.dart';
+export 'task_automation_service.dart';
 export 'task_repository.dart';
 export 'task_candidate_service.dart';
 export 'workspace.dart';

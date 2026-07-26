@@ -1,15 +1,18 @@
 import 'canonical_repository.dart';
+import 'models.dart';
 import 'workspace.dart';
 import 'workspace_mutation_lock.dart';
 
 T withRunScopeContextSnapshot<T>(
   Workspace workspace, {
-  required String domainId,
-  required String milestoneId,
+  WorkTask? task,
+  String? domainId,
+  String? milestoneId,
   required T Function(Map<String, Object?> snapshot) persist,
 }) => WorkspaceMutationLock.runExclusiveSync(workspace, () {
   final snapshot = buildRunScopeContextSnapshot(
     workspace,
+    task: task,
     domainId: domainId,
     milestoneId: milestoneId,
   );
@@ -18,13 +21,42 @@ T withRunScopeContextSnapshot<T>(
 
 Map<String, Object?> buildRunScopeContextSnapshot(
   Workspace workspace, {
-  required String domainId,
-  required String milestoneId,
+  WorkTask? task,
+  String? domainId,
+  String? milestoneId,
 }) {
   final repository = CanonicalRepository(workspace);
-  final domain = repository.get(EntityKind.domain, domainId);
-  final milestone = repository.get(EntityKind.milestone, milestoneId);
-  if ((domain == null) != (milestone == null)) {
+  final resolvedDomainId = task?.domainId ?? domainId ?? '';
+  final resolvedMilestoneId = task == null
+      ? milestoneId
+      : task.hasMilestone
+      ? task.milestoneId
+      : null;
+  if (resolvedDomainId.isEmpty) {
+    if (resolvedMilestoneId != null && resolvedMilestoneId.isNotEmpty) {
+      throw StateError('A Run Milestone requires a Domain.');
+    }
+    return _unscopedSnapshot(repository, task);
+  }
+  final domain = repository.get(EntityKind.domain, resolvedDomainId);
+  final milestone = resolvedMilestoneId == null
+      ? null
+      : repository.get(EntityKind.milestone, resolvedMilestoneId);
+  if (resolvedMilestoneId == null && domain == null) {
+    return {
+      'resolution_status': 'legacy_scope_ids_only',
+      'domain': {'id': resolvedDomainId, 'type': 'domain'},
+      'projects': <Object?>[],
+      'repositories': <Object?>[],
+      'personas': <Object?>[],
+      'agent_groups': <Object?>[],
+      'mcp_bindings': <Object?>[],
+      'skill_policies': <Object?>[],
+      if (task != null) 'task_configuration': _taskConfiguration(task),
+    };
+  }
+  if ((domain == null && milestone != null) ||
+      (domain != null && resolvedMilestoneId != null && milestone == null)) {
     throw StateError(
       'Domain and Milestone must either both exist or both be legacy IDs.',
     );
@@ -32,11 +64,11 @@ Map<String, Object?> buildRunScopeContextSnapshot(
   if (domain == null && milestone == null) {
     return {
       'resolution_status': 'legacy_scope_ids_only',
-      'domain': {'id': domainId, 'type': 'domain'},
+      'domain': {'id': resolvedDomainId, 'type': 'domain'},
       'milestone': {
-        'id': milestoneId,
+        'id': resolvedMilestoneId,
         'type': 'milestone',
-        'domain_id': domainId,
+        'domain_id': resolvedDomainId,
       },
       'projects': <Object?>[],
       'repositories': <Object?>[],
@@ -44,12 +76,83 @@ Map<String, Object?> buildRunScopeContextSnapshot(
       'agent_groups': <Object?>[],
       'mcp_bindings': <Object?>[],
       'skill_policies': <Object?>[],
+      if (task != null) 'task_configuration': _taskConfiguration(task),
     };
   }
-  return ScopeContextResolver(
-    workspace,
-  ).resolve(domainId: domainId, milestoneId: milestoneId).toJson();
+  final snapshot = ScopeContextResolver(workspace)
+      .resolve(domainId: resolvedDomainId, milestoneId: resolvedMilestoneId)
+      .toJson();
+  if (task != null) {
+    _selectProjects(repository, snapshot, task.projectIds);
+    snapshot['task_configuration'] = _taskConfiguration(task);
+  }
+  return snapshot;
 }
+
+Map<String, Object?> _unscopedSnapshot(
+  CanonicalRepository repository,
+  WorkTask? task,
+) {
+  final projects = task == null
+      ? const <CanonicalEntity>[]
+      : task.projectIds
+            .map((id) => repository.get(EntityKind.project, id))
+            .whereType<CanonicalEntity>()
+            .toList();
+  final repositoryIds = <String>{
+    for (final project in projects) ..._ids(project.data['repository_ids']),
+  };
+  final repositories = repositoryIds
+      .map((id) => repository.get(EntityKind.repository, id))
+      .whereType<CanonicalEntity>()
+      .toList();
+  return {
+    'resolution_status': 'unscoped',
+    'projects': projects.map((item) => item.data).toList(),
+    'repositories': repositories.map((item) => item.data).toList(),
+    'personas': <Object?>[],
+    'agent_groups': <Object?>[],
+    'mcp_bindings': <Object?>[],
+    'skill_policies': <Object?>[],
+    if (task != null) 'task_configuration': _taskConfiguration(task),
+  };
+}
+
+void _selectProjects(
+  CanonicalRepository repository,
+  Map<String, Object?> snapshot,
+  List<String> projectIds,
+) {
+  if (projectIds.isEmpty) return;
+  final projects = projectIds
+      .map((id) => repository.get(EntityKind.project, id))
+      .whereType<CanonicalEntity>()
+      .toList();
+  final repositoryIds = <String>{
+    for (final project in projects) ..._ids(project.data['repository_ids']),
+  };
+  snapshot['projects'] = projects.map((item) => item.data).toList();
+  snapshot['repositories'] = repositoryIds
+      .map((id) => repository.get(EntityKind.repository, id))
+      .whereType<CanonicalEntity>()
+      .map((item) => item.data)
+      .toList();
+}
+
+Map<String, Object?> _taskConfiguration(WorkTask task) => {
+  'project_ids': task.projectIds,
+  'target_environment_ids': task.effectiveTargetEnvironmentIds,
+  'model_selection_keys': task.modelSelectionKeys,
+  'processing_mode': task.processingMode.name,
+  'parent_task_id': task.parentTaskId,
+  'related_task_ids': task.relatedTaskIds,
+};
+
+List<String> _ids(Object? value) => switch (value) {
+  List items => items.whereType<String>().toList(),
+  String item => [item],
+  _ => const [],
+};
 
 class ResolvedScopeContext {
   const ResolvedScopeContext({

@@ -11,12 +11,13 @@ import 'workspace_mutation_lock.dart';
 class HostScopeBinding {
   const HostScopeBinding({
     required this.environmentId,
-    required this.domainId,
+    this.domainId = '',
     this.milestoneId,
     this.hermesProfile,
     this.discordAccountKey,
     this.repositoryPaths = const {},
     this.mcpCommands = const {},
+    this.modelBindings = const {},
   });
 
   final String environmentId;
@@ -26,17 +27,19 @@ class HostScopeBinding {
   final String? discordAccountKey;
   final Map<String, String> repositoryPaths;
   final Map<String, List<String>> mcpCommands;
+  final Map<String, String> modelBindings;
 
   String get key => '$environmentId|$domainId|${milestoneId ?? ''}';
 
   Map<String, Object?> toJson() => {
     'environment_id': environmentId,
-    'domain_id': domainId,
+    'domain_id': domainId.isEmpty ? null : domainId,
     'milestone_id': ?milestoneId,
     'hermes_profile': ?hermesProfile,
     'discord_account_key': ?discordAccountKey,
     'repository_paths': repositoryPaths,
     'mcp_commands': mcpCommands,
+    'model_bindings': modelBindings,
   };
 
   factory HostScopeBinding.fromJson(Map<String, Object?> json) {
@@ -83,12 +86,13 @@ class HostScopeBinding {
 
     return HostScopeBinding(
       environmentId: requiredString('environment_id'),
-      domainId: requiredString('domain_id'),
+      domainId: optionalString('domain_id') ?? '',
       milestoneId: optionalString('milestone_id'),
       hermesProfile: optionalString('hermes_profile'),
       discordAccountKey: optionalString('discord_account_key'),
       repositoryPaths: stringMap(json['repository_paths']),
       mcpCommands: commandMap(json['mcp_commands']),
+      modelBindings: stringMap(json['model_bindings']),
     );
   }
 }
@@ -137,6 +141,7 @@ class HostBindingRegistry {
           'discord_account_key',
           'repository_paths',
           'mcp_commands',
+          'model_bindings',
         }.contains(key),
       )) {
         throw const FormatException('Host binding contains an unknown field.');
@@ -172,6 +177,34 @@ class HostBindingRegistry {
               .singleOrNull;
   }
 
+  Map<String, String> resolveModels({
+    required String environmentId,
+    required String domainId,
+    String? milestoneId,
+    required List<String> selectionKeys,
+  }) {
+    if (selectionKeys.isEmpty) return const {};
+    final binding = resolve(
+      environmentId: environmentId,
+      domainId: domainId,
+      milestoneId: milestoneId,
+    );
+    if (binding == null) {
+      throw StateError(
+        'No host-local model binding exists for the selected environment.',
+      );
+    }
+    final result = <String, String>{};
+    for (final key in selectionKeys) {
+      final model = binding.modelBindings[key];
+      if (model == null || model.trim().isEmpty) {
+        throw StateError('Model selection key is not bound on this host: $key');
+      }
+      result[key] = model;
+    }
+    return result;
+  }
+
   void set(HostScopeBinding binding) =>
       WorkspaceMutationLock.runExclusiveSync(workspace, () => _set(binding));
 
@@ -203,6 +236,24 @@ class HostBindingRegistry {
     }
     if (!binding.environmentId.startsWith('ENV-')) {
       throw const FormatException('environment_id must use ENV- prefix.');
+    }
+    final modelKey = RegExp(r'^[A-Za-z0-9._-]+$');
+    for (final entry in binding.modelBindings.entries) {
+      if (!modelKey.hasMatch(entry.key) || entry.value.trim().isEmpty) {
+        throw const FormatException(
+          'Model bindings require portable keys and non-empty runtime models.',
+        );
+      }
+    }
+    if (binding.domainId.isEmpty) {
+      if (binding.milestoneId != null ||
+          binding.repositoryPaths.isNotEmpty ||
+          binding.mcpCommands.isNotEmpty) {
+        throw const FormatException(
+          'Unscoped host bindings may contain only runtime model/profile data.',
+        );
+      }
+      return;
     }
     final domain = repository.get(EntityKind.domain, binding.domainId);
     if (domain == null || domain.data['status'] != 'active') {

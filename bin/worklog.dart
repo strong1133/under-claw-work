@@ -61,12 +61,16 @@ Commands:
   memory-recall <workspace> <domain|milestone|task> <scope-id>
              cross-agent unified recall (restricted material excluded on CLI)
   task-create <workspace> <domain-id> <milestone-id> <title> <environment-id>
-  task-policy <workspace> <task-id> <derive:true|false> <followup:true|false> <depth>
+  task-create-config <workspace> <descriptor-json-file>
+             create an optionally scoped Task with project/env/model selections
+  task-config <workspace> <task-id> <descriptor-json-file>
+             replace Task scope, execution selections, relations and automation
+  task-policy <workspace> <task-id> <derive:true|false> <followup:true|false> <depth> [auto-accept]
   task-candidate-propose <workspace> <parent-task-id> <title> <draft-file>
              <objective-ids-csv> <knowledge-ids-csv> <reference-ids-csv> <reason>
   task-candidate-dispose <workspace> <candidate-id> <accept|reject>
   task-candidate-list <workspace>
-  task-prompt <workspace> <task-id> <draft|meta|approve> [content-file]
+  task-prompt <workspace> <task-id> <draft|request-meta|meta|approve> [content-file]
   runtime-register <workspace> <descriptor-json>
              register a local verified JSON runtime descriptor
   runtime-list <workspace>
@@ -74,6 +78,8 @@ Commands:
              generate a pending Meta Prompt through a verified adapter
   auto-meta-next <workspace> <environment-id> <adapter-id>
              pull and generate the next missing/stale Meta Prompt exactly once
+  task-automation-next <workspace>
+             schedule the next approved automatic Task exactly once
   notification-register <workspace> <local-config-json>
              register local-only FCM/Hermes notification credentials
   notification-list <workspace>
@@ -83,7 +89,7 @@ Commands:
              verify and atomically apply an extracted release
   update-rollback
              swap back to the previously verified installation
-  task-control <workspace> <task-id> <command> [run-id]
+  task-control <workspace> <task-id> <command> [environment-id|run-id]
              request start|pause|resume|cancel|complete
   worker-next <workspace> <environment-id> <executable> [runner-arguments...]
              execute the oldest pending start request using a JSON runner
@@ -618,6 +624,112 @@ Commands:
         );
         projection.rebuild();
         stdout.writeln(task.id);
+      case 'task-create-config':
+        if (arguments.length < 3) {
+          throw const FormatException(
+            'task-create-config requires workspace and descriptor JSON.',
+          );
+        }
+        final descriptor = _taskDescriptor(arguments[2]);
+        final draft = descriptor['prompt_draft'] as String? ?? '';
+        final configured = TaskRepository(workspace).create(
+          WorkTask(
+            id: newId('TSK'),
+            domainId: descriptor['domain_id'] as String? ?? '',
+            milestoneId: descriptor['milestone_id'] as String? ?? '',
+            title: descriptor['title'] as String,
+            status: descriptor['request_meta'] == true
+                ? TaskStatus.metaRequested
+                : TaskStatus.writing,
+            promptDraft: draft,
+            promptMeta: '',
+            promptDraftRevision: 1,
+            promptMetaSourceRevision: 0,
+            approval: PromptApproval.missing,
+            autoDeriveTasks: descriptor['auto_derive_tasks'] as bool? ?? false,
+            autoFollowupTasks:
+                descriptor['auto_followup_tasks'] as bool? ?? false,
+            autoAcceptGeneratedTasks:
+                descriptor['auto_accept_generated_tasks'] as bool? ?? false,
+            maxGenerationDepth: descriptor['max_generation_depth'] as int? ?? 2,
+            projectIds: _descriptorStrings(descriptor, 'project_ids'),
+            targetEnvironmentIds: _descriptorStrings(
+              descriptor,
+              'target_environment_ids',
+            ),
+            modelSelectionKeys: _descriptorStrings(
+              descriptor,
+              'model_selection_keys',
+            ),
+            processingMode: TaskProcessingMode.values.byName(
+              descriptor['processing_mode'] as String? ?? 'manual',
+            ),
+            parentTaskId: descriptor['parent_task_id'] as String?,
+            relatedTaskIds: _descriptorStrings(descriptor, 'related_task_ids'),
+          ),
+        );
+        projection.rebuild();
+        stdout.writeln(configured.id);
+      case 'task-config':
+        if (arguments.length < 4) {
+          throw const FormatException(
+            'task-config requires workspace, Task id and descriptor JSON.',
+          );
+        }
+        final tasks = TaskRepository(workspace);
+        final current = tasks.get(arguments[2]);
+        if (current == null) {
+          throw StateError('Task not found: ${arguments[2]}');
+        }
+        final descriptor = _taskDescriptor(
+          arguments[3],
+          requireTitle: false,
+          allowPromptFields: false,
+        );
+        final configured = tasks.configure(
+          current,
+          title: descriptor['title'] as String? ?? current.title,
+          domainId: descriptor.containsKey('domain_id')
+              ? descriptor['domain_id'] as String? ?? ''
+              : current.domainId,
+          milestoneId: descriptor.containsKey('milestone_id')
+              ? descriptor['milestone_id'] as String? ?? ''
+              : current.milestoneId,
+          projectIds: descriptor.containsKey('project_ids')
+              ? _descriptorStrings(descriptor, 'project_ids')
+              : current.projectIds,
+          targetEnvironmentIds: descriptor.containsKey('target_environment_ids')
+              ? _descriptorStrings(descriptor, 'target_environment_ids')
+              : current.effectiveTargetEnvironmentIds,
+          modelSelectionKeys: descriptor.containsKey('model_selection_keys')
+              ? _descriptorStrings(descriptor, 'model_selection_keys')
+              : current.modelSelectionKeys,
+          processingMode: descriptor.containsKey('processing_mode')
+              ? TaskProcessingMode.values.byName(
+                  descriptor['processing_mode'] as String,
+                )
+              : current.processingMode,
+          autoDeriveTasks:
+              descriptor['auto_derive_tasks'] as bool? ??
+              current.autoDeriveTasks,
+          autoFollowupTasks:
+              descriptor['auto_followup_tasks'] as bool? ??
+              current.autoFollowupTasks,
+          autoAcceptGeneratedTasks:
+              descriptor['auto_accept_generated_tasks'] as bool? ??
+              current.autoAcceptGeneratedTasks,
+          maxGenerationDepth:
+              descriptor['max_generation_depth'] as int? ??
+              current.maxGenerationDepth,
+          parentTaskId: descriptor.containsKey('parent_task_id')
+              ? descriptor['parent_task_id'] as String?
+              : current.parentTaskId,
+          relatedTaskIds: descriptor.containsKey('related_task_ids')
+              ? _descriptorStrings(descriptor, 'related_task_ids')
+              : current.relatedTaskIds,
+        );
+        projection.rebuild();
+        stdout.writeln('task=${configured.id}\tconfigured');
       case 'task-control':
         if (arguments.length < 4) {
           throw const FormatException(
@@ -631,7 +743,13 @@ Commands:
           task,
           command,
           operationId: newId('OPR'),
-          runId: arguments.length > 4 ? arguments[4] : null,
+          runId: command != ControlCommand.start && arguments.length > 4
+              ? arguments[4]
+              : null,
+          targetEnvironmentId:
+              command == ControlCommand.start && arguments.length > 4
+              ? arguments[4]
+              : null,
         );
         stdout.writeln('request=${command.name} run=$run');
       case 'worker-next':
@@ -723,6 +841,9 @@ Commands:
             autoDeriveTasks: bool.parse(arguments[3]),
             autoFollowupTasks: bool.parse(arguments[4]),
             maxGenerationDepth: int.parse(arguments[5]),
+            autoAcceptGeneratedTasks: arguments.length > 6
+                ? bool.parse(arguments[6])
+                : task.autoAcceptGeneratedTasks,
           ),
         );
         projection.rebuild();
@@ -751,6 +872,9 @@ Commands:
           knowledgeIds: csv(arguments[6]),
           referenceIds: csv(arguments[7]),
           reason: arguments[8],
+          relation: arguments.length > 9
+              ? GeneratedTaskRelation.values.byName(arguments[9])
+              : GeneratedTaskRelation.child,
         );
         stdout.writeln('${candidate.id}\tpending');
       case 'task-candidate-dispose':
@@ -786,11 +910,14 @@ Commands:
         final task = repository.get(arguments[2]);
         if (task == null) throw StateError('Task not found: ${arguments[2]}');
         final action = arguments[3];
-        if (action != 'approve' && arguments.length < 5) {
+        if (action != 'approve' &&
+            action != 'request-meta' &&
+            arguments.length < 5) {
           throw const FormatException('draft/meta requires a content file.');
         }
         final updated = switch (action) {
           'approve' => repository.approveMeta(task),
+          'request-meta' => repository.requestMeta(task),
           'draft' => repository.saveDraft(
             task,
             File(arguments[4]).readAsStringSync(),
@@ -832,6 +959,14 @@ Commands:
             'meta-generate requires workspace, task id and adapter id.',
           );
         }
+        final metaRepository = TaskRepository(workspace);
+        final metaTask = metaRepository.get(arguments[2]);
+        if (metaTask == null) {
+          throw StateError('Task not found: ${arguments[2]}');
+        }
+        if ({TaskStatus.draft, TaskStatus.writing}.contains(metaTask.status)) {
+          metaRepository.requestMeta(metaTask);
+        }
         final result = await MetaPromptService(
           workspace,
         ).generate(taskId: arguments[2], adapterId: arguments[3]);
@@ -871,6 +1006,23 @@ Commands:
           stdout.writeln(
             'auto_meta=${result.status.name} task=${result.taskId} '
             'output_sha256=${result.outputSha256}',
+          );
+        }
+      case 'task-automation-next':
+        await GitSyncService(workspace).pullFastForward();
+        projection.rebuild();
+        final result = TaskAutomationService(workspace, projection).runNext();
+        if (result == null) {
+          stdout.writeln('task_automation=idle');
+        } else {
+          await CanonicalSyncService(workspace).syncCanonical(
+            message: 'worklog: schedule automatic Task ${result.taskId}',
+            verifier: const CanonicalSecretVerifier(),
+          );
+          stdout.writeln(
+            'task_automation=scheduled task=${result.taskId} '
+            'environment=${result.targetEnvironmentId} '
+            'run=${result.runId}',
           );
         }
       case 'notification-register':
@@ -1059,4 +1211,70 @@ void _printHosts() {
       'No Agent host detected; Flutter and CLI management remain available.',
     );
   }
+}
+
+Map<String, Object?> _taskDescriptor(
+  String path, {
+  bool requireTitle = true,
+  bool allowPromptFields = true,
+}) {
+  final decoded = jsonDecode(File(path).readAsStringSync());
+  if (decoded is! Map) {
+    throw const FormatException('Task descriptor must be a JSON object.');
+  }
+  final descriptor = Map<String, Object?>.from(decoded);
+  final allowed = {
+    'title',
+    'domain_id',
+    'milestone_id',
+    'project_ids',
+    'target_environment_ids',
+    'model_selection_keys',
+    'processing_mode',
+
+    'auto_derive_tasks',
+    'auto_followup_tasks',
+    'auto_accept_generated_tasks',
+    'max_generation_depth',
+    'parent_task_id',
+    'related_task_ids',
+    if (allowPromptFields) 'prompt_draft',
+    if (allowPromptFields) 'request_meta',
+  };
+  final unknown = descriptor.keys.where((key) => !allowed.contains(key));
+  if (unknown.isNotEmpty) {
+    throw FormatException(
+      'Unknown Task descriptor fields: ${unknown.join(", ")}',
+    );
+  }
+  if (requireTitle &&
+      (descriptor['title'] is! String ||
+          (descriptor['title'] as String).trim().isEmpty)) {
+    throw const FormatException('Task descriptor requires a non-empty title.');
+  }
+  for (final key in const {
+    'project_ids',
+    'target_environment_ids',
+    'model_selection_keys',
+    'related_task_ids',
+  }) {
+    if (descriptor.containsKey(key)) _descriptorStrings(descriptor, key);
+  }
+  if (descriptor['request_meta'] == true &&
+      (descriptor['prompt_draft'] is! String ||
+          (descriptor['prompt_draft'] as String).trim().isEmpty)) {
+    throw const FormatException(
+      'request_meta requires a non-empty prompt_draft.',
+    );
+  }
+  return descriptor;
+}
+
+List<String> _descriptorStrings(Map<String, Object?> source, String key) {
+  final value = source[key];
+  if (value == null) return const [];
+  if (value is! List || value.any((item) => item is! String)) {
+    throw FormatException('$key must be an array of strings.');
+  }
+  return value.cast<String>();
 }
