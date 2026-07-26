@@ -161,6 +161,7 @@ for executable in systemctl hermes; do
 done
 PATH="$fake_bin:$PATH" \
 HOME="$temp/service-home" \
+XDG_CONFIG_HOME="$temp/service-home/.config" \
 UNDER_CLAW_WORK_HOME="$UNDER_CLAW_WORK_HOME" \
 UNDER_CLAW_HERMES_BIN="$fake_bin/hermes" \
 bash "$release/packaging/install-auto-meta-service.sh" \
