@@ -174,6 +174,7 @@ class AutoMetaWorker {
           generated = await generator.generate(
             taskId: fencedSource.id,
             adapterId: adapterId,
+            recordAudit: false,
           );
         } on Object catch (error) {
           final failureAudit = _recordFailureAudit(
@@ -477,6 +478,10 @@ class AutoMetaWorker {
           'source_revision': source.promptDraftRevision,
           'source_sha256': sourceSha256,
           'output_sha256': generated.outputSha256,
+          'result_sha256': TaskRepository.draftSha256(
+            generated.task.promptMeta,
+          ),
+          'result_ref': 'task:${source.id}#meta@${source.promptDraftRevision}',
           'started_at': now,
           'finished_at': now,
         },
@@ -501,6 +506,10 @@ class AutoMetaWorker {
           'source_revision': source.promptDraftRevision,
           'source_sha256': sourceSha256,
           'output_sha256': generated.outputSha256,
+          'result_sha256': TaskRepository.draftSha256(
+            generated.task.promptMeta,
+          ),
+          'result_ref': 'task:${source.id}#meta@${source.promptDraftRevision}',
           'started_at': now,
           'finished_at': now,
         },

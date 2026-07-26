@@ -78,7 +78,9 @@ supplies the reasoning; Under Claw Work supplies the queue and the record.
 4. Invoke `under-claw-meta-prompt` explicitly and write its output to a file.
    Naming the skill in prose is not an invocation.
 5. Record the result against the same Draft revision:
-   `worklog task-prompt <workspace> <task-id> meta <meta-file>`
+   먼저 `worklog task-meta-evidence ... > evidence.json`으로 Core가 Draft/Meta
+   hash와 portable result ref를 계산하게 한 뒤
+   `worklog task-meta-record <workspace> <task-id> <meta-file> evidence.json`
 6. The user reviews and approves:
    `worklog task-prompt <workspace> <task-id> approve`
 
@@ -92,8 +94,11 @@ generation on a host without one.
 ```text
 worklog task-list <workspace>
 worklog task-pending-meta <workspace>
-worklog task-create <workspace> <domain> <milestone> <title> <environment>
-worklog task-prompt <workspace> <task> <draft|meta|approve|request-meta> [file]
+worklog task-create <workspace> <title> [--domain <domain>] \
+  [--milestone <milestone>] [--environment <environment>]
+worklog task-prompt <workspace> <task> <draft|approve|request-meta> [file]
+worklog task-meta-evidence <workspace> <task> <meta-file> <bundle-version> <bundle-sha256> <host-invocation-id> <host-id> <runner-id> <started-at> <finished-at> [environment]
+worklog task-meta-record <workspace> <task> <meta-file> <evidence-json>
 worklog meta-generate <workspace> <task-id> <adapter-id>
 worklog auto-meta-next <workspace> <environment-id> <adapter-id>
 worklog notification-register <workspace> <local-config-json>

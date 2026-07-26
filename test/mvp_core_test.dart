@@ -25,7 +25,13 @@ void main() {
     var task = tasks.create(_task(status: TaskStatus.draft));
     task = tasks.saveDraft(task, 'Changed Draft');
     expect(task.approval, PromptApproval.stale);
-    task = tasks.saveMeta(task, 'Generated Meta');
+    task = ManualMetaPromptService(workspace)
+        .recordCompleted(
+          taskId: task.id,
+          metaPrompt: 'Generated Meta',
+          evidence: _metaEvidence(task, 'Generated Meta'),
+        )
+        .task;
     expect(task.approval, PromptApproval.pending);
     task = tasks.approveMeta(task);
     expect(task.isMetaCurrent, isTrue);
@@ -352,6 +358,23 @@ void main() {
     );
   });
 }
+
+Map<String, Object?> _metaEvidence(WorkTask task, String meta) => {
+  'protocol': 'under-claw-meta-evidence/v1',
+  'skill_id': 'under-claw-meta-prompt',
+  'bundle_version': 'test',
+  'bundle_checksum': 'a' * 64,
+  'host_invocation_id': 'test-${task.id}-${task.promptDraftRevision}',
+  'host_id': 'test',
+  'runner_id': 'test',
+  'source_revision': task.promptDraftRevision,
+  'source_sha256': TaskRepository.draftSha256(task.promptDraft),
+  'started_at': '2026-07-26T01:00:00Z',
+  'finished_at': '2026-07-26T01:01:00Z',
+  'status': 'completed',
+  'result_sha256': TaskRepository.draftSha256(meta),
+  'result_ref': 'task:${task.id}#meta@${task.promptDraftRevision}',
+};
 
 WorkTask _task({TaskStatus status = TaskStatus.ready}) {
   return WorkTask(

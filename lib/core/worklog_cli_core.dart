@@ -23,6 +23,7 @@ export 'id.dart';
 export 'installed_runtime_registry.dart';
 export 'legacy_migration.dart';
 export 'match_service.dart';
+export 'manual_meta_prompt_service.dart';
 export 'mcp_server.dart';
 export 'memory_recall_service.dart';
 export 'meta_prompt_service.dart';

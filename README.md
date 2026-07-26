@@ -126,10 +126,15 @@ worklog task-pending-meta <workspace>
 # 3. 큐가 알려준 정본 경로에서 Draft를 읽는다
 # 4. under-claw-meta-prompt를 명시적으로 호출해 결과를 파일로 저장한다
 
-# 5. 같은 Draft revision에 대해 결과를 기록
-worklog task-prompt <workspace> <task-id> meta <meta-file>
+# 5. host 호출 ID와 pinned bundle checksum으로 evidence v1 생성
+worklog task-meta-evidence <workspace> <task-id> <meta-file> \
+  <bundle-version> <bundle-sha256> <host-invocation-id> \
+  <host-id> <runner-id> <started-at> <finished-at> > evidence.json
 
-# 6. 검토 후 승인
+# 6. host 실행 증거와 함께 같은 Draft revision의 결과를 기록
+worklog task-meta-record <workspace> <task-id> <meta-file> <evidence-json>
+
+# 7. 검토 후 승인
 worklog task-prompt <workspace> <task-id> approve
 ```
 
@@ -206,11 +211,14 @@ worklog entity-link <workspace> <kind> <id> <field> <target-kind> <target-id>
 worklog graph-validate <workspace>
 worklog knowledge-search <workspace> <query>
 worklog context-build <workspace> <task>
-worklog task-create <workspace> <domain> <milestone> <title> <environment>
+worklog task-create <workspace> <title> [--domain <domain>] \
+  [--milestone <milestone>] [--environment <environment>]
 worklog task-policy <workspace> <task> <derive> <followup> <depth>
 worklog task-candidate-list <workspace>
 worklog task-candidate-dispose <workspace> <candidate> <accept|reject>
-worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
+worklog task-prompt <workspace> <task> <draft|request-meta|approve> [content-file]
+worklog task-meta-evidence <workspace> <task> <meta-file> <bundle-version> <bundle-sha256> <host-invocation-id> <host-id> <runner-id> <started-at> <finished-at> [environment]
+worklog task-meta-record <workspace> <task> <meta-file> <evidence-json>
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
 worklog migrate-dry-run <workspace> <legacy-path>
 worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environment> --approve

@@ -144,6 +144,28 @@ class WorklogContractValidator {
         _id(entity, 'run_id', 'RUN-');
         _nonEmpty(entity, 'skill_id');
         _integer(entity, 'sequence', minimum: 1);
+        if (const {
+          'host_reported',
+          'runtime_observed',
+        }.contains(entity.data['evidence_kind'])) {
+          _equals(entity, 'skill_id', 'under-claw-meta-prompt');
+          _allowed(entity, 'status', const ['completed']);
+          for (final field in const [
+            'bundle_version',
+            'host_invocation_id',
+            'host_id',
+            'runner_id',
+            'source_sha256',
+            'result_sha256',
+            'result_ref',
+            'started_at',
+            'finished_at',
+          ]) {
+            _nonEmpty(entity, field);
+          }
+          _pattern(entity, 'bundle_checksum', RegExp(r'^[0-9a-f]{64}$'));
+          _integer(entity, 'source_revision', minimum: 1);
+        }
       case EntityKind.controlRequest:
         _id(entity, 'task_id', 'TSK-');
         _id(entity, 'operation_id', 'OPR-');

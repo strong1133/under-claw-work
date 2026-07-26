@@ -186,6 +186,11 @@ class TaskRepository {
         'Only a Meta Prompt for the current Draft is approvable.',
       );
     }
+    if (!_hasCurrentMetaPromptEvidence(task)) {
+      throw StateError(
+        'Canonical under-claw-meta-prompt evidence is required for approval.',
+      );
+    }
     return update(
       task.copyWith(
         approval: PromptApproval.approved,
@@ -200,6 +205,32 @@ class TaskRepository {
             : task.status,
       ),
     );
+  }
+
+  bool _hasCurrentMetaPromptEvidence(WorkTask task) {
+    final sourceSha256 = draftSha256(task.promptDraft);
+    final resultSha256 = draftSha256(task.promptMeta);
+    final runs = {
+      for (final run in canonical.list(EntityKind.run))
+        if (run.data['task_id'] == task.id &&
+            run.data['status'] == 'completed' &&
+            run.data['source_revision'] == task.promptDraftRevision &&
+            run.data['source_sha256'] == sourceSha256)
+          run.id,
+    };
+    return canonical
+        .list(EntityKind.invocation)
+        .any(
+          (invocation) =>
+              runs.contains(invocation.data['run_id']) &&
+              invocation.data['skill_id'] == 'under-claw-meta-prompt' &&
+              invocation.data['status'] == 'completed' &&
+              invocation.data['source_revision'] == task.promptDraftRevision &&
+              invocation.data['source_sha256'] == sourceSha256 &&
+              invocation.data['result_sha256'] == resultSha256 &&
+              invocation.data['result_ref'] ==
+                  'task:${task.id}#meta@${task.promptDraftRevision}',
+        );
   }
 
   void _requirePromptMutationAllowed(WorkTask task) {

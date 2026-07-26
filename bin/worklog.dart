@@ -61,7 +61,9 @@ Commands:
   context-build <workspace> <task-id> [token-budget]
   memory-recall <workspace> <domain|milestone|task> <scope-id>
              cross-agent unified recall (restricted material excluded on CLI)
-  task-create <workspace> <domain-id> <milestone-id> <title> <environment-id>
+  task-create <workspace> <title> [--domain <domain-id>]
+              [--milestone <milestone-id>] [--environment <environment-id>]
+             legacy: <workspace> <domain-id> <milestone-id> <title> <environment-id>
   task-create-config <workspace> <descriptor-json-file>
              create an optionally scoped Task with project/env/model selections
   task-config <workspace> <task-id> <descriptor-json-file>
@@ -71,7 +73,13 @@ Commands:
              <objective-ids-csv> <knowledge-ids-csv> <reference-ids-csv> <reason>
   task-candidate-dispose <workspace> <candidate-id> <accept|reject>
   task-candidate-list <workspace>
-  task-prompt <workspace> <task-id> <draft|request-meta|meta|approve> [content-file]
+  task-prompt <workspace> <task-id> <draft|request-meta|approve> [content-file]
+  task-meta-evidence <workspace> <task-id> <meta-file> <bundle-version>
+             <bundle-sha256> <host-invocation-id> <host-id> <runner-id>
+             <started-at> <finished-at> [environment-id]
+             emit a validated host evidence descriptor
+  task-meta-record <workspace> <task-id> <meta-file> <evidence-json-file>
+             record host-generated Meta with canonical invocation evidence
   runtime-register <workspace> <descriptor-json>
              register a local verified JSON runtime descriptor
   runtime-list <workspace>
@@ -640,18 +648,18 @@ Commands:
           );
         }
       case 'task-create':
-        if (arguments.length < 6) {
+        if (arguments.length < 3) {
           throw const FormatException(
-            'task-create requires workspace, domain, milestone, title and '
-            'environment.',
+            'task-create requires workspace and title.',
           );
         }
+        final input = _taskCreateInput(arguments);
         final task = TaskRepository(workspace).create(
           WorkTask(
             id: newId('TSK'),
-            domainId: arguments[2],
-            milestoneId: arguments[3],
-            title: arguments[4],
+            domainId: input.domainId,
+            milestoneId: input.milestoneId,
+            title: input.title,
             status: TaskStatus.draft,
             promptDraft: '',
             promptMeta: '',
@@ -659,7 +667,9 @@ Commands:
             promptMetaSourceRevision: 0,
             approval: PromptApproval.missing,
             autoDeriveTasks: false,
-            targetEnvironment: arguments[5],
+            targetEnvironmentIds: input.environmentId.isEmpty
+                ? const []
+                : [input.environmentId],
           ),
         );
         projection.rebuild();
@@ -962,14 +972,74 @@ Commands:
             task,
             File(arguments[4]).readAsStringSync(),
           ),
-          'meta' => repository.saveMeta(
-            task,
-            File(arguments[4]).readAsStringSync(),
+          'meta' => throw StateError(
+            'Use task-meta-record so under-claw-meta-prompt evidence is '
+            'recorded.',
           ),
           _ => throw FormatException('Unknown prompt action: $action'),
         };
         projection.rebuild();
         stdout.writeln('task=${updated.id} approval=${updated.approval.name}');
+      case 'task-meta-record':
+        if (arguments.length < 5) {
+          throw const FormatException(
+            'task-meta-record requires workspace, task id, Meta file and '
+            'evidence JSON.',
+          );
+        }
+        final decodedEvidence = jsonDecode(
+          File(arguments[4]).readAsStringSync(),
+        );
+        if (decodedEvidence is! Map<String, Object?>) {
+          throw const FormatException('Meta evidence must be a JSON object.');
+        }
+        final recorded = ManualMetaPromptService(workspace).recordCompleted(
+          taskId: arguments[2],
+          metaPrompt: File(arguments[3]).readAsStringSync(),
+          evidence: decodedEvidence,
+        );
+        projection.rebuild();
+        stdout.writeln(
+          'task=${recorded.task.id} run=${recorded.runId} '
+          'invocation=${recorded.invocationId} '
+          'approval=${recorded.task.approval.name}',
+        );
+      case 'task-meta-evidence':
+        if (arguments.length < 11) {
+          throw const FormatException(
+            'task-meta-evidence requires workspace, task id, Meta file, '
+            'bundle version/checksum, host invocation/host/runner ids and '
+            'start/finish timestamps.',
+          );
+        }
+        final evidenceTask = TaskRepository(workspace).get(arguments[2]);
+        if (evidenceTask == null) {
+          throw StateError('Task not found: ${arguments[2]}');
+        }
+        final evidenceMeta = File(arguments[3]).readAsStringSync();
+        stdout.writeln(
+          jsonEncode({
+            'protocol': 'under-claw-meta-evidence/v1',
+            'skill_id': ManualMetaPromptService.skillId,
+            'bundle_version': arguments[4],
+            'bundle_checksum': arguments[5],
+            'host_invocation_id': arguments[6],
+            'host_id': arguments[7],
+            'runner_id': arguments[8],
+            'source_revision': evidenceTask.promptDraftRevision,
+            'source_sha256': TaskRepository.draftSha256(
+              evidenceTask.promptDraft,
+            ),
+            'started_at': arguments[9],
+            'finished_at': arguments[10],
+            'status': 'completed',
+            'result_sha256': TaskRepository.draftSha256(evidenceMeta),
+            'result_ref':
+                'task:${evidenceTask.id}#meta@'
+                '${evidenceTask.promptDraftRevision}',
+            if (arguments.length > 11) 'environment_id': arguments[11],
+          }),
+        );
       case 'runtime-register':
         if (arguments.length < 3) {
           throw const FormatException(
@@ -1261,6 +1331,48 @@ void _printHosts() {
       'No Agent host detected; Flutter and CLI management remain available.',
     );
   }
+}
+
+({String title, String domainId, String milestoneId, String environmentId})
+_taskCreateInput(List<String> arguments) {
+  // Preserve the original positional contract for existing scripts.
+  if (arguments.length == 6 && !arguments[2].startsWith('--')) {
+    return (
+      title: arguments[4],
+      domainId: arguments[2],
+      milestoneId: arguments[3],
+      environmentId: arguments[5],
+    );
+  }
+
+  final title = arguments[2].trim();
+  if (title.isEmpty) {
+    throw const FormatException('task-create requires a non-empty title.');
+  }
+  final values = <String, String>{};
+  for (var index = 3; index < arguments.length; index += 2) {
+    final option = arguments[index];
+    if (!const {'--domain', '--milestone', '--environment'}.contains(option)) {
+      throw FormatException('Unknown task-create option: $option');
+    }
+    if (index + 1 >= arguments.length ||
+        arguments[index + 1].startsWith('--')) {
+      throw FormatException('$option requires a value.');
+    }
+    if (values.containsKey(option)) {
+      throw FormatException('Duplicate task-create option: $option');
+    }
+    values[option] = arguments[index + 1];
+  }
+  if (values.containsKey('--milestone') && !values.containsKey('--domain')) {
+    throw const FormatException('A Task Milestone requires a Domain.');
+  }
+  return (
+    title: title,
+    domainId: values['--domain'] ?? '',
+    milestoneId: values['--milestone'] ?? '',
+    environmentId: values['--environment'] ?? '',
+  );
 }
 
 Map<String, Object?> _taskDescriptor(

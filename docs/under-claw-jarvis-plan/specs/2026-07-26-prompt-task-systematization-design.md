@@ -102,7 +102,7 @@ AI 기반 자동 실행은 이번 범위에서 제외한다.
 | R1: 상태 어휘 변경이 `round5_core_test.dart:132`의 `[완료] → completed` 기대를 깰 수 있다 | `완료` 단독 라벨은 그대로 `completed`로 남기고 `요청완료`만 재매핑 |
 | R2: `import()` 시그니처 변경이 기존 테스트 2건을 깬다 | 두 테스트를 같은 커밋에서 갱신하고 의미 보존 여부를 assert |
 | R3: 첨부 파일이 정본 레포를 키운다 | 텍스트만 편입하고 크기 상한을 두며, 시크릿 스캔 대상에 포함 |
-| R4: solo 진행이라 독립 검수가 없다 | `DEGRADED_REVIEW` 공개 + 결정적 실행 검증으로 보완 |
+| R4: 수동 host가 제출하는 실행 증거는 암호학적 attestation이 아니다 | `evidence_kind: host_reported`로 Core 관찰 evidence와 구분하고 입력·출력 hash 및 immutable canonical record를 검증 |
 
 **미해결 가정 (확인 필요)**
 
@@ -152,3 +152,88 @@ import한 결과다. 원본 저장소는 읽기만 했다.
 
 사용자의 Draft 원문에 포함된 로컬 경로는 그대로 보존한다. 정본에서 배제하는 것은
 구조화 필드이지 사용자가 직접 쓴 요청 본문이 아니다.
+
+## 9. 재검수 보완 라운드 (2026-07-26)
+
+최초 구현 이후 사용자 요구 1~10, 현재 `dev` 구현, `underjoy-work-log`의 실제 raw
+운용을 세 참여자가 독립 대조했다. 데이터 모델의 대규모 재설계는 필요 없지만
+“완전히 일치” 판정 전 아래 두 공백을 닫아야 한다는 데 전원 합의했다.
+
+### 9.1 추가 성공기준
+
+| ID | 성공기준 | verify |
+|---|---|---|
+| S10 | 간편 CLI에서 무소속, Domain-only, Domain+Milestone Task를 만들 수 있고 기존 positional 문법도 동작한다 | CLI process test + 생성된 Task decode |
+| S11 | 수동 `$under-claw-meta-prompt` 결과는 host evidence와 함께만 canonical Meta로 회수된다 | 정상/누락/변조 evidence 테스트 |
+| S12 | Meta 승인은 current Draft와 exact Meta에 대응하는 completed `under-claw-meta-prompt` Run·Invocation·Event가 있을 때만 가능하다 | 승인 gate의 정상/stale/unrelated evidence 테스트 |
+| S13 | adapter 직접 생성과 AutoMetaWorker 모두 같은 필수 감사 필드를 남기되 중복 Run/Invocation/Event를 만들지 않는다 | adapter/worker 회귀 테스트 |
+
+### 9.2 채택 계약
+
+현대형 간편 생성 문법은 다음과 같다.
+
+```text
+worklog task-create <workspace> <title>
+  [--domain <DOM>] [--milestone <MLS>] [--environment <ENV>]
+```
+
+기존 `task-create <workspace> <domain> <milestone> <title> <environment>`는
+호환 입력으로 유지한다. Milestone만 지정하는 입력은 기존 계층 무결성 규칙대로
+거부한다.
+
+수동 Meta 회수는 다음 단일 경계를 사용한다.
+
+```text
+worklog task-meta-record
+  <workspace> <task-id> <meta-file> <evidence-json-file>
+```
+
+evidence v1은 `under-claw-meta-prompt` skill ID, bundle version/checksum, host
+invocation/session ID, runner ID, 선택 environment ID, source revision/hash,
+시작·종료 시각과 completed 상태를 포함한다. Core는 exact Meta의 SHA-256을 직접
+계산한다. 외부 host가 제공한 증거는 `host_reported`, Core가 adapter subprocess를
+직접 관찰한 증거는 `core_observed`로 구분한다. 어느 경우에도 stdout 또는 prose만으로
+성공을 주장하지 않는다.
+
+성공 기록은 기존 immutable `Run → SkillInvocation → Event` 그래프를 재사용한다.
+`result_ref`는 로컬 절대경로가 아닌 Task와 Meta revision을 가리키는 portable
+canonical locator다. `approveMeta`는 Run의 `task_id`, Draft revision/hash,
+Invocation의 skill/status, exact Meta result hash가 모두 일치하는지 확인한다.
+증거 없는 기존 `task-prompt ... meta` 우회는 새 명령 안내와 함께 차단한다.
+
+### 9.3 변경 범위와 번호 task
+
+1. **T6 — optional-scope 간편 CLI**
+   - 파일: `bin/worklog.dart`, CLI 테스트, README/skill 사용법
+   - verify: no-scope / Domain-only / Domain+Milestone / optional Environment /
+     milestone-only reject / legacy positional
+2. **T7 — 수동 Meta 감사 경계**
+   - 파일: 신규 Core service, Core export, `bin/worklog.dart`, 감사 schema/validator
+   - verify: evidence 검증, immutable Run/SKI/Event, partial-write rollback,
+     중복 host invocation 거부
+3. **T8 — 승인 gate와 adapter 감사 정렬**
+   - 파일: `task_repository.dart`, `meta_prompt_service.dart`,
+     `auto_meta_worker.dart`의 최소 정렬, 관련 테스트
+   - verify: current/stale/unrelated evidence, exact Meta hash, adapter/worker
+     중복 없음
+4. **T9 — 실무 문서와 UI 안내 정렬**
+   - 파일: `README.md`, `README.en.md`, `skills/under-claw-work/SKILL.md`,
+     필요한 UI 문구와 테스트
+   - verify: 명령·evidence 성격·legacy Meta 재생성 요구가 구현과 일치
+
+건드리지 않는 영역은 AI Task 실행, candidate 생성, jarvis loop, Task v3의 업무
+필드, underjoy 원본이다. Meta 승인 이후 자동 실행은 이번 보완 라운드의 범위가
+아니다.
+
+### 9.4 합의 게이트
+
+| ACTIVE_PARTICIPANT | 독립산출 | 교차검토 | 유효ACK |
+|---|:---:|:---:|:---:|
+| ORCHESTRATOR | ✅ | ✅ | ✅ |
+| DOMAIN_REVIEWER | ✅ | ✅ | ✅ |
+| CODE_REVIEWER | ✅ | ✅ | ✅ |
+
+진행을 막는 `[BLOCK]`은 없다. 잔여 리스크는 host evidence가 non-attested라는 점,
+기존 pending Meta도 승인 전에 새 evidence가 필요하다는 호환성 변화, adapter와
+AutoMetaWorker의 감사 소유권 중복 가능성이다. 구현 단계에서 각각 명시 구분,
+문서화, 단일 writer 경계와 회귀 테스트로 닫는다.

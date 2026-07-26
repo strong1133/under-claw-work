@@ -80,6 +80,8 @@ void main() {
       hasLength(1),
     );
     expect(CanonicalRepository(workspace).list(EntityKind.event), hasLength(2));
+    final approved = TaskRepository(workspace).approveMeta(updated);
+    expect(approved.status, TaskStatus.ready);
   });
 
   test('treats missing or stale Meta as eligible but not pending Meta', () {
@@ -443,13 +445,18 @@ class _MutatingMetaPromptService extends MetaPromptService {
   Future<MetaPromptGenerationResult> generate({
     required String taskId,
     required String adapterId,
+    bool recordAudit = true,
   }) {
     final repository = TaskRepository(workspace);
     repository.saveDraft(
       repository.get(taskId)!,
       'Draft changed before adapter invocation',
     );
-    return super.generate(taskId: taskId, adapterId: adapterId);
+    return super.generate(
+      taskId: taskId,
+      adapterId: adapterId,
+      recordAudit: recordAudit,
+    );
   }
 }
 
@@ -463,10 +470,12 @@ class _PostSaveMutatingMetaPromptService extends MetaPromptService {
   Future<MetaPromptGenerationResult> generate({
     required String taskId,
     required String adapterId,
+    bool recordAudit = true,
   }) async {
     final generated = await super.generate(
       taskId: taskId,
       adapterId: adapterId,
+      recordAudit: recordAudit,
     );
     final repository = TaskRepository(workspace);
     repository.saveDraft(

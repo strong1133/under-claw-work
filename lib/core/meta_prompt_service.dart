@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import 'installed_runtime_registry.dart';
+import 'manual_meta_prompt_service.dart';
 import 'models.dart';
 import 'task_repository.dart';
 import 'workspace.dart';
@@ -37,6 +38,7 @@ class MetaPromptService {
   Future<MetaPromptGenerationResult> generate({
     required String taskId,
     required String adapterId,
+    bool recordAudit = true,
   }) async {
     final repository = TaskRepository(workspace);
     final source = repository.get(taskId);
@@ -46,6 +48,7 @@ class MetaPromptService {
     }
     final descriptor = runtimes.require(adapterId, capability: 'generate_meta');
     final sourceSha256 = TaskRepository.draftSha256(source.promptDraft);
+    final startedAt = DateTime.now().toUtc();
     final process = await Process.start(
       descriptor.executable,
       descriptor.fixedArguments,
@@ -99,10 +102,37 @@ class MetaPromptService {
         current.promptDraft != source.promptDraft) {
       throw StateError('Draft changed while Meta Prompt was generating.');
     }
-    final updated = repository.saveMeta(
-      current,
-      (decoded['meta_prompt'] as String).trim(),
-    );
+    final metaPrompt = (decoded['meta_prompt'] as String).trim();
+    final finishedAt = DateTime.now().toUtc();
+    final updated = recordAudit
+        ? ManualMetaPromptService(workspace)
+              .recordCompleted(
+                taskId: current.id,
+                metaPrompt: metaPrompt,
+                evidenceKind: 'runtime_observed',
+                evidence: {
+                  'protocol': 'under-claw-meta-evidence/v1',
+                  'skill_id': ManualMetaPromptService.skillId,
+                  'bundle_version': 'installed-runtime-v1',
+                  'bundle_checksum': descriptor.executableSha256,
+                  'host_invocation_id':
+                      '${descriptor.id}:${process.pid}:'
+                      '${startedAt.microsecondsSinceEpoch}',
+                  'host_id': descriptor.id,
+                  'runner_id': 'process:${process.pid}',
+                  'source_revision': current.promptDraftRevision,
+                  'source_sha256': sourceSha256,
+                  'started_at': startedAt.toIso8601String(),
+                  'finished_at': finishedAt.toIso8601String(),
+                  'status': 'completed',
+                  'result_sha256': TaskRepository.draftSha256(metaPrompt),
+                  'result_ref':
+                      'task:${current.id}#meta@'
+                      '${current.promptDraftRevision}',
+                },
+              )
+              .task
+        : repository.saveMeta(current, metaPrompt);
     return MetaPromptGenerationResult(
       task: updated,
       adapterId: descriptor.id,

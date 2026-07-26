@@ -159,11 +159,14 @@ worklog entity-link <workspace> <kind> <id> <field> <target-kind> <target-id>
 worklog graph-validate <workspace>
 worklog knowledge-search <workspace> <query>
 worklog context-build <workspace> <task>
-worklog task-create <workspace> <domain> <milestone> <title> <environment>
+worklog task-create <workspace> <title> [--domain <domain>] \
+  [--milestone <milestone>] [--environment <environment>]
 worklog task-policy <workspace> <task> <derive> <followup> <depth>
 worklog task-candidate-list <workspace>
 worklog task-candidate-dispose <workspace> <candidate> <accept|reject>
-worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
+worklog task-prompt <workspace> <task> <draft|request-meta|approve> [content-file]
+worklog task-meta-evidence <workspace> <task> <meta-file> <bundle-version> <bundle-sha256> <host-invocation-id> <host-id> <runner-id> <started-at> <finished-at> [environment]
+worklog task-meta-record <workspace> <task> <meta-file> <evidence-json>
 worklog task-control <workspace> <task> <start|pause|resume|cancel|complete>
 worklog migrate-dry-run <workspace> <legacy-path>
 worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environment> --approve

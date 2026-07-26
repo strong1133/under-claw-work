@@ -954,7 +954,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         ? repository.saveMeta(task, controller.text)
         : repository.saveDraft(task, controller.text);
     _refresh();
-    setState(() => _selected = updated);
+    setState(() {
+      _selected = updated;
+      _message = meta
+          ? 'Meta draft saved. Generate it through under-claw-meta-prompt '
+                'and record canonical evidence before approval.'
+          : 'Prompt Draft saved.';
+    });
   }
 
   void _approveMeta() {

@@ -136,7 +136,13 @@ void main() {
     );
     expect(AutoMetaWorker.isEligible(automatic), isTrue);
 
-    final generated = repository.saveMeta(automatic, 'Meta');
+    final generated = ManualMetaPromptService(workspace)
+        .recordCompleted(
+          taskId: automatic.id,
+          metaPrompt: 'Meta',
+          evidence: _metaEvidence(automatic, 'Meta'),
+        )
+        .task;
     expect(generated.status, TaskStatus.metaReview);
     expect(AutoMetaWorker.isEligible(generated), isFalse);
 
@@ -434,6 +440,23 @@ prompt:
     expect(() => candidates.accept(candidate.id), throwsStateError);
   });
 }
+
+Map<String, Object?> _metaEvidence(WorkTask task, String meta) => {
+  'protocol': 'under-claw-meta-evidence/v1',
+  'skill_id': 'under-claw-meta-prompt',
+  'bundle_version': 'test',
+  'bundle_checksum': 'b' * 64,
+  'host_invocation_id': 'test-${task.id}-${task.promptDraftRevision}',
+  'host_id': 'test',
+  'runner_id': 'test',
+  'source_revision': task.promptDraftRevision,
+  'source_sha256': TaskRepository.draftSha256(task.promptDraft),
+  'started_at': '2026-07-26T01:00:00Z',
+  'finished_at': '2026-07-26T01:01:00Z',
+  'status': 'completed',
+  'result_sha256': TaskRepository.draftSha256(meta),
+  'result_ref': 'task:${task.id}#meta@${task.promptDraftRevision}',
+};
 
 WorkTask _task({
   required String id,
