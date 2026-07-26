@@ -1457,7 +1457,7 @@ class _GraphEntityDetail extends StatelessWidget {
   }
 }
 
-class _TaskList extends StatelessWidget {
+class _TaskList extends StatefulWidget {
   const _TaskList({
     required this.tasks,
     required this.selected,
@@ -1469,33 +1469,142 @@ class _TaskList extends StatelessWidget {
   final ValueChanged<WorkTask> onSelected;
 
   @override
+  State<_TaskList> createState() => _TaskListState();
+}
+
+class _TaskListState extends State<_TaskList> {
+  final _query = TextEditingController();
+  TaskStatus? _status;
+  String? _domainId;
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  /// Domains that the loaded Tasks actually use, so the filter never offers a
+  /// choice that yields nothing.
+  List<String> get _domainIds {
+    final ids = widget.tasks
+        .map((task) => task.domainId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    ids.sort();
+    return ids;
+  }
+
+  List<WorkTask> get _visible {
+    final needle = _query.text.trim().toLowerCase();
+    return widget.tasks.where((task) {
+      if (_status != null && task.status != _status) return false;
+      if (_domainId != null && task.domainId != _domainId) return false;
+      if (needle.isEmpty) return true;
+      // Search the prompt too: a Task is usually remembered by what it asked
+      // for, not by the title someone typed months ago.
+      return task.title.toLowerCase().contains(needle) ||
+          task.id.toLowerCase().contains(needle) ||
+          task.promptDraft.toLowerCase().contains(needle);
+    }).toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final visible = _visible;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
           child: Text(
-            'Tasks',
+            'Tasks (${visible.length}/${widget.tasks.length})',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
         ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: tasks.length,
-            itemBuilder: (context, index) {
-              final task = tasks[index];
-              return ListTile(
-                selected: selected?.id == task.id,
-                title: Text(task.title),
-                subtitle: Text('${task.id} · ${task.status.name}'),
-                leading: Icon(
-                  task.isMetaCurrent ? Icons.check_circle : Icons.warning_amber,
-                ),
-                onTap: () => onSelected(task),
-              );
-            },
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: TextField(
+            key: const Key('task-search'),
+            controller: _query,
+            decoration: const InputDecoration(
+              isDense: true,
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Search title, id or draft',
+            ),
+            onChanged: (_) => setState(() {}),
           ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<TaskStatus?>(
+                  key: const Key('task-status-filter'),
+                  isExpanded: true,
+                  initialValue: _status,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Status',
+                  ),
+                  items: [
+                    const DropdownMenuItem<TaskStatus?>(
+                      child: Text('All statuses'),
+                    ),
+                    for (final status in TaskStatus.values)
+                      DropdownMenuItem<TaskStatus?>(
+                        value: status,
+                        child: Text(status.name),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() => _status = value),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  key: const Key('task-domain-filter'),
+                  isExpanded: true,
+                  initialValue: _domainId,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Domain',
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(child: Text('All domains')),
+                    for (final id in _domainIds)
+                      DropdownMenuItem<String?>(value: id, child: Text(id)),
+                  ],
+                  onChanged: (value) => setState(() => _domainId = value),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: visible.isEmpty
+              ? const Center(
+                  key: Key('task-list-empty'),
+                  child: Text('No Task matches this filter.'),
+                )
+              : ListView.builder(
+                  itemCount: visible.length,
+                  itemBuilder: (context, index) {
+                    final task = visible[index];
+                    return ListTile(
+                      selected: widget.selected?.id == task.id,
+                      title: Text(task.title),
+                      subtitle: Text('${task.id} · ${task.status.name}'),
+                      leading: Icon(
+                        task.isMetaCurrent
+                            ? Icons.check_circle
+                            : Icons.warning_amber,
+                      ),
+                      onTap: () => widget.onSelected(task),
+                    );
+                  },
+                ),
         ),
       ],
     );

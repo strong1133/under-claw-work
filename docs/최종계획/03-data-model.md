@@ -41,8 +41,8 @@ workdb/domains/{domain_id}/domain.md
 schema_version: 1
 id: DOM-...
 type: domain
-name: lawtomatic
-title: 로토매틱
+name: example-domain
+title: 예시 도메인
 status: active
 owners:
   - user:example
@@ -143,12 +143,14 @@ Agent가 Task를 생성하고 완료 여부를 평가할 때 사용할 목표 �
 
 ```text
 workdb/tasks/{task_id}/
-├─ task.yaml
-├─ prompt.draft.md
-├─ prompt.meta.md
-├─ relations.yaml
-└─ artifacts.md
+├─ task.yaml        # 업무 필드 + Draft·Meta 본문
+└─ relations.yaml   # Task 간 관계
 ```
+
+Draft와 Meta는 별도 `.md` 파일이 아니라 `task.yaml` 안의 block scalar로 저장한다.
+Task 1건이 파일 1건이므로 생성·갱신이 단일 atomic write가 되고, 본문과 revision·
+approval 필드가 갈라진 상태로 커밋될 수 없다. 외부 편집기에서 프롬프트를 읽어야
+하면 정본을 분해하지 말고 `worklog obsidian-export`의 파생 vault를 쓴다.
 
 `task.yaml` 핵심 스키마:
 
@@ -199,38 +201,29 @@ updated_at: ...
 legacy_ids: []
 ```
 
-## Prompt 문서
+## Prompt
 
-Prompt 파일 frontmatter:
-
-```yaml
----
-schema_version: 1
-task_id: TSK-...
-prompt_type: draft
-revision: 1
-created_by:
-  actor_type: user
-  actor_id: user:example
-created_at: ...
----
-```
-
-Meta Prompt에는 추가 필드가 필요하다.
+Draft와 Meta는 `task.yaml`의 `prompt` 블록 안에 본문과 메타데이터를 함께 둔다.
 
 ```yaml
-prompt_type: meta
-revision: 1
-based_on_draft_revision: 1
-approval_status: approved
-approved_by: user:example
-approved_at: ...
-generator:
-  kind: skill
-  name: under-claw-meta-prompt
-  bundle_version: ...
-  invocation_id: SKI-...
+prompt:
+  draft_revision: 3
+  meta_source_revision: 3
+  meta_source_sha256: ...        # Meta가 근거로 삼은 Draft의 해시
+  approval: approved             # missing | stale | pending | approved
+  draft: |-
+    사용자가 쓴 요청 원문
+  meta: |-
+    under-claw-meta-prompt가 생성한 실행 프롬프트
 ```
+
+`meta_source_revision`과 `meta_source_sha256`이 현재 Draft와 어긋나면 승인은 자동으로
+`stale`이 되고 Meta를 다시 만들어야 한다. 그래서 본문과 revision 필드를 같은 파일에
+둔다 — 둘이 갈라진 상태로 커밋될 수 없다.
+
+Meta 생성 근거(스킬 ID, bundle version·checksum, host invocation, 시각)는 prompt 블록이
+아니라 immutable `Run → SkillInvocation → Event` 그래프에 남긴다. 계약은
+[Task 작업 흐름](04-task-workflow.md)을 따른다.
 
 과거 revision은 Git history로 보존한다. 자주 비교하거나 복원해야 할 필요가 확인되면 `revisions/`에 immutable snapshot을 추가한다.
 
@@ -379,7 +372,7 @@ Event는 append-only다.
 경로:
 
 ```text
-workdb/events/{YYYY}/{MM}/{event_id}.yaml
+workdb/events/{event_id}.yaml
 ```
 
 ```yaml
@@ -408,7 +401,7 @@ payload:
 경로:
 
 ```text
-workdb/control-requests/{YYYY}/{MM}/{control_request_id}.yaml
+workdb/control-requests/{control_request_id}.yaml
 ```
 
 ```yaml
@@ -456,7 +449,7 @@ ACK, reject, withdraw, expire와 supersede는 Request를 수정하지 않고 별
 경로:
 
 ```text
-workdb/control-dispositions/{request_id}.yaml
+workdb/control-dispositions/{disposition_event_id}.yaml
 ```
 
 ```yaml

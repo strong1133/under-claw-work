@@ -118,7 +118,12 @@ Commands:
   migrate-import <workspace> <legacy-path> <domain-id> <milestone-id>
              <environment-id> --approve
   migrate-rollback <workspace> <import-id>
-  doctor     verify workspace and report locked capabilities
+  obsidian-export <workspace> [vault-directory]
+             render a read-only Obsidian vault from canonical data
+  serve <workspace> [port]
+             loopback-only read-only browser view; prints a one-time token
+  doctor <workspace>
+             verify the standardized layout and report locked capabilities
 ''');
     return;
   }
@@ -1237,6 +1242,27 @@ Commands:
           'committed=${report.committed} rebased=${report.rebased} '
           'pushed=${report.pushed}',
         );
+      case 'serve':
+        // Loopback-only, token-gated, read-only. The token is printed once and
+        // never written anywhere.
+        final session = await LocalWebServer(
+          workspace,
+        ).start(port: arguments.length > 2 ? int.parse(arguments[2]) : 0);
+        stdout.writeln('url=${session.url}');
+        stdout.writeln('bind=${session.address.address}:${session.port}');
+        stdout.writeln('mode=read-only');
+        stdout.writeln('Press Ctrl+C to stop.');
+        await ProcessSignal.sigint.watch().first;
+        await session.close();
+      case 'obsidian-export':
+        // A derived read-only vault. The canonical prompt stays inside
+        // task.yaml; this projects it so Obsidian can read and graph it.
+        final export = ObsidianVaultExporter(workspace).export(
+          destination: arguments.length > 2 ? Directory(arguments[2]) : null,
+        );
+        stdout.writeln('vault=${export.destination.path}');
+        stdout.writeln('notes=${export.noteCount}');
+        stdout.writeln('pruned=${export.removedCount}');
       case 'projection-rebuild':
         final result = ProjectionLifecycle(
           workspace,
@@ -1300,9 +1326,25 @@ Commands:
         projection.rebuild();
         stdout.writeln('rollback=${arguments[2]}');
       case 'doctor':
-        workspace.ensureLayout();
+        // Inspect before repairing so the report describes what the user
+        // actually has, not what ensureLayout would have silently fixed.
+        final layout = workspace.inspectLayout();
+        stdout.writeln('workspace=${layout.status}');
+        stdout.writeln(
+          'layout_version='
+          '${layout.manifestVersion ?? 'absent'}'
+          '/${Workspace.layoutVersion}',
+        );
+        for (final directory in layout.missingDirectories) {
+          stdout.writeln('missing_directory=$directory');
+        }
+        for (final directory in layout.missingPlaceholders) {
+          stdout.writeln('unportable_directory=$directory');
+        }
+        if (!layout.isComplete) {
+          stdout.writeln('repair=worklog init <workspace>');
+        }
         projection.open();
-        stdout.writeln('workspace=ok');
         stdout.writeln('sqlite=ok');
         stdout.writeln('auth_provider=pending_selection');
         stdout.writeln('hermes_contract=current_upstream_documented');

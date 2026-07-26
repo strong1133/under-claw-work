@@ -43,6 +43,9 @@ void main() {
         ),
       );
       final projection = ProjectionStore(workspace)..rebuild();
+      // Registered after the directory tear-down so it runs first: Windows
+      // refuses to delete the workspace while the SQLite handle is still open.
+      addTearDown(projection.dispose);
       final runner = _GeneratedTaskRunner();
 
       await SkillPipeline(

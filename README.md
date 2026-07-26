@@ -184,6 +184,50 @@ under-claw-work-plan
 템플릿은 [`personas/`](personas/)에 있다. Installer는 기존 `AGENTS.md`,
 `CLAUDE.md`, `SOUL.md`를 덮어쓰지 않는다.
 
+## 관리·조회 표면
+
+같은 정본을 세 갈래로 본다. **정본을 바꾸는 것은 CLI와 데스크톱 앱뿐**이다. 상태
+전이와 Meta 승인은 evidence 게이트를 통과해야 하므로 읽기 표면에 열지 않는다.
+
+| 표면 | 용도 | 쓰기 |
+|---|---|---|
+| 데스크톱 앱 (Flutter) | Task 생성·편집, Meta 요청·승인, 실행 제어 | O |
+| `worklog` CLI | 위 전부 + 자동화·배치 | O |
+| Obsidian 파생 vault | 프롬프트 읽기, 그래프·백링크 탐색 | X |
+| 로컬 브라우저 뷰 | 목록·검색·프롬프트 열람 | X |
+
+### Obsidian 파생 vault
+
+정본 Draft·Meta는 `task.yaml` 안에 있어 Obsidian이 직접 열지 못한다. 정본을
+분해하는 대신 읽기 전용 vault로 투영한다.
+
+```bash
+worklog obsidian-export <workspace>          # 기본 .worklog/obsidian/
+worklog obsidian-export <workspace> <vault>  # 위치 지정
+```
+
+노트 파일명이 정본 ID이므로 `[[TSK-...]]` 링크, 그래프 뷰, 백링크가 정본 관계를
+그대로 따른다. 단방향이다 — vault에서 고친 내용은 정본으로 돌아가지 않고 다음
+export에서 덮어써진다. 기본 출력 위치는 `.worklog/` 아래라 커밋되지 않는다. 이미
+내용이 있으면서 이 도구가 만들지 않은 디렉터리로는 export를 거부한다.
+
+### 로컬 브라우저 뷰
+
+```bash
+worklog serve <workspace> [port]
+```
+
+기동할 때마다 1회용 토큰을 발급해 URL과 함께 출력한다. 보안 경계는 다음과 같다.
+
+- loopback 인터페이스에만 바인딩한다. 다른 인터페이스로 여는 옵션이 없다.
+- 모든 요청이 토큰을 제시해야 한다. 토큰은 Git·정본·로그에 남기지 않는다.
+- `Host` 헤더가 loopback이 아니면 거부한다(DNS rebinding 차단).
+- CORS 헤더를 보내지 않아 다른 origin이 응답을 읽지 못한다.
+- 쓰기 엔드포인트가 없다. `GET` 외 모든 메서드를 거부한다.
+
+이 토큰은 전송 계층의 세션 토큰이며 저장소 password가 아니다. 저장소 인증은
+검증된 provider가 선정될 때까지 잠겨 있다.
+
 ## Flutter 앱
 
 개발 환경에서 실행:
@@ -235,6 +279,8 @@ worklog notification-list <workspace>
 worklog worker-next-agent <workspace> <environment-id> <adapter-id>
 worklog update-check|update-apply <extracted-release-directory>
 worklog update-rollback
+worklog obsidian-export <workspace> [vault-directory]
+worklog serve <workspace> [port]
 worklog doctor <workspace>
 ```
 
@@ -264,8 +310,41 @@ publisher identity나 코드 서명을 대신하지 않는다.
 - 현재 MVP의 Private Git 접근은 Git credential helper 또는 SSH Agent를 사용한다.
 - 자체 암호 프로토콜은 구현하지 않는다.
 - `.worklog/projection.sqlite3`은 Git에 포함하지 않는다.
+- `worklog serve`는 loopback에만 바인딩하고 1회용 토큰을 요구하며 쓰기 경로가 없다.
 
-## 저장소 구조
+## 기억 저장소 구조
+
+사용자가 지정한 기억 저장소는 초기화 시 표준 트리로 규격화된다. Git이 빈
+디렉터리를 추적하지 않으므로 각 정본 디렉터리에 placeholder를 씨딩하고,
+`workdb/workspace.yaml`에 레이아웃 버전과 디렉터리 목록을 남긴다. 그래서 다른
+기기에서 clone해도 같은 트리가 그대로 재현된다.
+
+```text
+<기억 저장소 루트>/
+├─ workdb/          정본. Git이 추적한다.
+│  ├─ workspace.yaml            레이아웃 매니페스트
+│  ├─ tasks/ domains/ milestones/ objectives/ projects/ ...
+│  ├─ knowledge/ references/ matches/
+│  ├─ events/ runs/ claims/ invocations/ control-requests/ ...
+│  └─ config/                   environments.yaml, agents.yaml 등
+└─ .worklog/        호스트 로컬. Git이 추적하지 않는다.
+   ├─ projection.sqlite3        재생성 가능한 SQLite projection
+   └─ obsidian/                 파생 Obsidian vault
+```
+
+```bash
+worklog doctor <workspace>   # workspace=ok | unversioned | version_mismatch
+                             # | incomplete | not_portable
+worklog init <workspace>     # 진단에서 나온 격차를 복구한다
+```
+
+`doctor`는 진단만 하고 고치지 않는다. 사용자가 자기 저장소 상태를 먼저 보고
+복구를 결정하도록 하기 위해서다. 전체 명세는
+[`docs/최종계획/12-memory-repository-layout.md`](docs/최종계획/12-memory-repository-layout.md)에
+있다. 도구가 보장하는 것은 레이아웃뿐이며 Domain·Task·Knowledge의 내용은 저장소
+주인의 몫이다.
+
+## 제품 저장소 구조
 
 ```text
 lib/core/              공용 Core와 SQLite projection

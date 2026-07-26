@@ -131,6 +131,53 @@ revision. Native host context and opt-in persona templates live in
 [`personas/`](personas/). The installer never overwrites an existing
 `AGENTS.md`, `CLAUDE.md`, or `SOUL.md`.
 
+## Management and review surfaces
+
+Four views of the same canonical data. **Only the CLI and the desktop app
+write.** Status transitions and Meta approval must pass evidence gates, so the
+read-only surfaces never expose them.
+
+| Surface | Use | Writes |
+|---|---|---|
+| Desktop app (Flutter) | author Tasks, request and approve Meta, control runs | yes |
+| `worklog` CLI | everything above plus automation | yes |
+| Derived Obsidian vault | read prompts, follow the graph and backlinks | no |
+| Local browser view | browse, search, read prompts | no |
+
+### Derived Obsidian vault
+
+The canonical Draft and Meta live inside `task.yaml`, which Obsidian cannot open
+as a note. Rather than splitting the canonical record, project it:
+
+```bash
+worklog obsidian-export <workspace>          # defaults to .worklog/obsidian/
+worklog obsidian-export <workspace> <vault>
+```
+
+Note filenames are canonical IDs, so `[[TSK-...]]` links, graph view, and
+backlinks follow canonical relations. The projection is one-way: edits in the
+vault never reach canonical data and are overwritten on the next export. The
+default location sits under `.worklog/`, so it is never committed. Exporting
+into a non-empty directory this tool does not own is refused.
+
+### Local browser view
+
+```bash
+worklog serve <workspace> [port]
+```
+
+Each launch mints a one-time token and prints it with the URL.
+
+- Binds the loopback interface only; no option exposes another interface.
+- Every request must present the token, which never reaches Git, canonical
+  data, or a log.
+- A non-loopback `Host` header is rejected, which blocks DNS rebinding.
+- No CORS header is ever sent, so another origin cannot read a response.
+- There is no write endpoint; every method other than `GET` is refused.
+
+This token authenticates a local transport session. It is not the repository
+password, which stays locked until a reviewed provider is selected.
+
 ## Flutter
 
 For development:
@@ -173,6 +220,8 @@ worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <environme
 worklog migrate-rollback <workspace> <import-id>
 worklog git-status <workspace>
 worklog git-pull <workspace>
+worklog obsidian-export <workspace> [vault-directory]
+worklog serve <workspace> [port]
 worklog doctor <workspace>
 ```
 
@@ -185,8 +234,41 @@ worklog doctor <workspace>
 - Private Git access currently uses the Git credential helper or SSH Agent.
 - The project does not invent a cryptographic protocol.
 - `.worklog/projection.sqlite3` is never committed.
+- `worklog serve` binds loopback only, requires the launch token, and has no
+  write path.
 
-## Repository layout
+## Memory repository layout
+
+Initialization standardizes the memory repository the user chose. Git does not
+track empty directories, so each canonical directory is seeded with a
+placeholder and `workdb/workspace.yaml` records the layout version and the
+directory list. A clone on another machine reproduces the same tree.
+
+```text
+<memory repository root>/
+├─ workdb/          canonical, tracked by Git
+│  ├─ workspace.yaml            layout manifest
+│  ├─ tasks/ domains/ milestones/ objectives/ projects/ ...
+│  ├─ knowledge/ references/ matches/
+│  ├─ events/ runs/ claims/ invocations/ control-requests/ ...
+│  └─ config/                   environments.yaml, agents.yaml, ...
+└─ .worklog/        host-local, never tracked
+   ├─ projection.sqlite3        rebuildable SQLite projection
+   └─ obsidian/                 derived Obsidian vault
+```
+
+```bash
+worklog doctor <workspace>   # workspace=ok | unversioned | version_mismatch
+                             # | incomplete | not_portable
+worklog init <workspace>     # repairs what the diagnosis reported
+```
+
+`doctor` diagnoses without repairing, so the owner sees the state before
+deciding. The full specification is in
+[`docs/최종계획/12-memory-repository-layout.md`](docs/최종계획/12-memory-repository-layout.md).
+The tool guarantees the layout; the contents belong to the repository owner.
+
+## Product repository layout
 
 ```text
 lib/core/              shared Core and SQLite projection

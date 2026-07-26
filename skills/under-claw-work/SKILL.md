@@ -62,6 +62,35 @@ The Meta, loop, and plan skills are supplied by the checksum-pinned
    carry them record the value in the migration report instead, and binding a
    path to a Repository entity stays an explicit user decision.
 8. Treat the user's memory repository as theirs: change only what was asked.
+   Initialization standardizes the directory tree and writes
+   `workdb/workspace.yaml`; it never creates Domains, Tasks, or records.
+9. Write canonical data only through the CLI or the desktop app. The Obsidian
+   vault and `worklog serve` are read-only projections, so never report a
+   status transition or Meta approval as done from an edit made there.
+
+## Management and review surfaces
+
+| Surface | Use | Writes |
+|---|---|---|
+| Desktop app, `worklog` CLI | author, request and approve Meta, control runs | yes |
+| `worklog obsidian-export` | read prompts, follow graph and backlinks | no |
+| `worklog serve` | browse and search in a local browser | no |
+
+The canonical Draft and Meta live inside `task.yaml`. Do not split them into
+separate files to make an editor happy — project them with `obsidian-export`
+instead. `serve` binds loopback only, requires a per-launch token, and exposes
+no write endpoint; its token is a transport session token, not the repository
+password.
+
+## Memory repository layout
+
+Every memory repository standardizes on the same tree. Because Git does not
+track empty directories, each canonical directory carries a placeholder and
+`workdb/workspace.yaml` records the layout version, so a clone reproduces the
+tree exactly. Diagnose with `worklog doctor <workspace>`; it reports
+`ok`, `unversioned`, `version_mismatch`, `incomplete`, or `not_portable` and
+does not repair. Repair with `worklog init <workspace>`. The normative
+specification is `docs/최종계획/12-memory-repository-layout.md`.
 
 ## Meta Prompt authoring loop (host Agent, no runtime adapter)
 
@@ -106,6 +135,9 @@ worklog notification-list <workspace>
 worklog entity-list <workspace> [kind]
 worklog entity-create <workspace> <kind> <title> [domain-id] [milestone-id]
 worklog reference-attach <workspace> <title> <file> [domain] [milestone] [task]
+worklog obsidian-export <workspace> [vault-directory]
+worklog serve <workspace> [port]
+worklog doctor <workspace>
 worklog migrate-dry-run <workspace> <legacy-path>
 worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <env> \
   --approve [--map <map-json-file>]

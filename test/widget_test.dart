@@ -339,4 +339,100 @@ void main() {
       expect(result!.requestMeta, isTrue);
     },
   );
+
+  testWidgets('Task list narrows by status, Domain and free text', (
+    tester,
+  ) async {
+    final temporary = Directory.systemTemp.createTempSync('under-claw-filter-');
+    addTearDown(() => temporary.deleteSync(recursive: true));
+    final workspace = Workspace(temporary)..ensureLayout();
+    final entities = EntityService(workspace);
+    final alpha = entities.create(kind: EntityKind.domain, title: 'Alpha').id;
+    final beta = entities.create(kind: EntityKind.domain, title: 'Beta').id;
+    final tasks = TaskRepository(workspace);
+    WorkTask seed({
+      required String id,
+      required String title,
+      required TaskStatus status,
+      required String domainId,
+      String draft = 'Draft',
+    }) => WorkTask(
+      id: id,
+      domainId: domainId,
+      title: title,
+      status: status,
+      promptDraft: draft,
+      promptMeta: '',
+      promptDraftRevision: 1,
+      promptMetaSourceRevision: 0,
+      approval: PromptApproval.missing,
+      autoDeriveTasks: false,
+    );
+
+    tasks.create(
+      seed(
+        id: 'TSK-alpha',
+        title: 'Search contract',
+        status: TaskStatus.metaRequested,
+        domainId: alpha,
+        draft: '검색 대상 필드를 확장한다',
+      ),
+    );
+    tasks.create(
+      seed(
+        id: 'TSK-beta',
+        title: 'Release gate',
+        status: TaskStatus.writing,
+        domainId: beta,
+      ),
+    );
+    tasks.create(
+      seed(
+        id: 'TSK-gamma',
+        title: 'Notification retry',
+        status: TaskStatus.metaRequested,
+        domainId: beta,
+      ),
+    );
+
+    await tester.pumpWidget(UnderClawWorkApp(workspaceOverride: temporary));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tasks (3/3)'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('task-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('metaRequested').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tasks (2/3)'), findsOneWidget);
+    expect(find.text('Release gate'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('task-domain-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(beta).last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tasks (1/3)'), findsOneWidget);
+    expect(find.text('Notification retry'), findsOneWidget);
+
+    // A Task is often remembered by what its Draft asked for, so the search
+    // covers the prompt and not only the title.
+    await tester.tap(find.byKey(const Key('task-domain-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('All domains').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('task-search')), '검색 대상');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tasks (1/3)'), findsOneWidget);
+    // The selected Task also titles the detail pane, so the title appears twice.
+    expect(find.text('Search contract'), findsWidgets);
+    expect(find.text('Notification retry'), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('task-search')), 'nothing');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('task-list-empty')), findsOneWidget);
+  });
 }

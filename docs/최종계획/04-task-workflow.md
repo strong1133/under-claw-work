@@ -26,11 +26,12 @@ Core가 허용된 상태 전이만 수행한다. GUI나 Agent가 `task.yaml`을 
 
 ## Task 생성
 
-1. Domain과 Milestone 존재 확인
+1. 지정된 Domain·Milestone 존재 확인. 둘 다 선택이며 무소속 Task를 허용하되,
+   Milestone만 지정하고 Domain을 비우는 입력은 계층 무결성 위반으로 거부한다.
 2. 연결된 주요 Objective, 사전 Knowledge와 Reference 로드
 3. Task가 기여할 Objective를 하나 이상 선택
 4. ULID 기반 Task ID 발급
-5. `task.yaml`과 `prompt.draft.md` 생성
+5. Draft를 본문으로 포함한 `task.yaml` 생성(별도 prompt 파일을 만들지 않는다)
 6. 생성 근거 Knowledge와 Reference 기록
 7. Draft가 비어 있지 않으면 `meta_required`
 8. 생성 Event 기록

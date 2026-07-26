@@ -177,6 +177,9 @@ void main() {
   });
 
   test('host binding registry is written with owner-only permissions', () {
+    // HostBindingRegistry only enforces POSIX modes off Windows, where the
+    // registry file inherits the ACL of its parent instead.
+    if (Platform.isWindows) return;
     final domain = entities.create(kind: EntityKind.domain, title: 'AI');
     final registry = HostBindingRegistry(workspace);
     registry.set(

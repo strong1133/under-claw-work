@@ -59,7 +59,6 @@ class SetupService {
       '${const JsonEncoder.withIndent('  ').convert({'schema_version': 1, 'workspace_root': root.path, 'clone_owned': cloned})}\n',
       flush: true,
     );
-    _ensurePrivateProjectionIgnored(root);
     // Identity is keyed on the immutable machine key, never on the editable
     // alias, so re-running setup on the same host reuses the same ENV id even
     // if the environment has since been renamed.
@@ -109,17 +108,6 @@ class SetupService {
         arguments,
         result.stderr.toString().trim(),
         result.exitCode,
-      );
-    }
-  }
-
-  void _ensurePrivateProjectionIgnored(Directory root) {
-    final ignore = File(p.join(root.path, '.gitignore'));
-    final existing = ignore.existsSync() ? ignore.readAsStringSync() : '';
-    if (!existing.split('\n').contains('.worklog/')) {
-      ignore.writeAsStringSync(
-        '${existing.isEmpty || existing.endsWith('\n') ? existing : '$existing\n'}.worklog/\n',
-        flush: true,
       );
     }
   }
