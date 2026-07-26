@@ -21,6 +21,12 @@ properties:
     type: array
     uniqueItems: true
     items: {type: string, pattern: "^ENV-[A-Za-z0-9_-]+$"}
+  # v3 carries the v1/v2 `target_environment` forward so that rewriting a
+  # migrated Task does not withdraw its legacy start allowance. Selecting
+  # `target_environment_ids` explicitly clears it back to null.
+  legacy_target_environment:
+    type: [string, "null"]
+    pattern: "^ENV-[A-Za-z0-9_-]+$"
   project_ids:
     type: array
     uniqueItems: true

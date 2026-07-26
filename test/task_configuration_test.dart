@@ -333,6 +333,87 @@ prompt:
     );
   });
 
+  test('rewriting a v1 Task keeps its legacy Environment start allowance', () {
+    final file = File(
+      '${workspace.tasks.path}/TSK-legacy-environment/task.yaml',
+    )..parent.createSync(recursive: true);
+    file.writeAsStringSync('''
+schema_version: 1
+id: TSK-legacy-environment
+title: Legacy environment task
+status: ready
+auto_derive_tasks: false
+target_environment: "ENV-retired"
+prompt:
+  draft_revision: 1
+  meta_source_revision: 1
+  meta_source_sha256: "${TaskRepository.draftSha256('Draft')}"
+  approval: approved
+  draft: |-
+      Draft
+  meta: |-
+      Meta
+''');
+
+    final repository = TaskRepository(workspace);
+    final migrated = repository.get('TSK-legacy-environment')!;
+    expect(migrated.usesLegacyTargetEnvironment, isTrue);
+
+    // Any canonical write promotes the file to schema version 3. The legacy
+    // selection must survive that promotion, otherwise a Task that could be
+    // started before the write can no longer be started after it.
+    repository.update(migrated);
+    expect(file.readAsStringSync(), contains('schema_version: 3'));
+
+    final rewritten = repository.get('TSK-legacy-environment')!;
+    expect(rewritten.usesLegacyTargetEnvironment, isTrue);
+    expect(rewritten.legacyTargetEnvironment, 'ENV-retired');
+    expect(rewritten.effectiveTargetEnvironmentIds, ['ENV-retired']);
+
+    final projection = ProjectionStore(workspace);
+    addTearDown(projection.dispose);
+    final control = ControlService(workspace, projection);
+    expect(
+      control.requestStart(rewritten, newId('OPR')),
+      startsWith('RUN-'),
+      reason:
+          'ENV-retired is not a registered Environment, so only the '
+          'preserved legacy allowance can permit this start.',
+    );
+
+    // Selecting Environments explicitly is the opt-out: it replaces the legacy
+    // allowance with the canonical Environment requirement.
+    final reconfigured = repository.configure(
+      rewritten,
+      title: rewritten.title,
+      domainId: '',
+      milestoneId: '',
+      projectIds: const [],
+      targetEnvironmentIds: [macbook.id],
+      modelSelectionKeys: const [],
+      processingMode: TaskProcessingMode.manual,
+      autoDeriveTasks: false,
+      autoFollowupTasks: false,
+      autoAcceptGeneratedTasks: false,
+      maxGenerationDepth: 2,
+      parentTaskId: null,
+      relatedTaskIds: const [],
+    );
+    expect(reconfigured.usesLegacyTargetEnvironment, isFalse);
+    expect(
+      repository.get('TSK-legacy-environment')!.usesLegacyTargetEnvironment,
+      isFalse,
+    );
+    expect(
+      () => control.requestStart(
+        reconfigured,
+        newId('OPR'),
+        targetEnvironmentId: 'ENV-retired',
+      ),
+      throwsStateError,
+    );
+  });
+
   test('candidate acceptance rechecks the current parent policy', () {
     final repository = TaskRepository(workspace);
     final parent = repository.create(

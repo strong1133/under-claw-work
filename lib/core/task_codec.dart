@@ -33,7 +33,7 @@ class TaskCodec {
       maxGenerationDepth: raw['max_generation_depth'] as int? ?? 2,
       targetEnvironment: schemaVersion < 3
           ? _legacyEnvironment(raw['target_environment'])
-          : null,
+          : _legacyEnvironment(raw['legacy_target_environment']),
       targetEnvironmentIds: schemaVersion >= 3
           ? _strings(raw, 'target_environment_ids')
           : const [],
@@ -90,6 +90,7 @@ max_generation_depth: ${task.maxGenerationDepth}
 processing_mode: ${task.processingMode.name}
 project_ids: ${_list(task.projectIds)}
 target_environment_ids: ${_list(task.effectiveTargetEnvironmentIds)}
+legacy_target_environment: ${task.legacyTargetEnvironment == null ? 'null' : _scalar(task.legacyTargetEnvironment!)}
 model_selection_keys: ${_list(task.modelSelectionKeys)}
 execution_scope: ${task.executionScope.name}
 parent_task_id: ${task.parentTaskId == null ? 'null' : _scalar(task.parentTaskId!)}

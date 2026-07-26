@@ -103,6 +103,12 @@ class WorkTask {
 
   bool get usesLegacyTargetEnvironment => _legacyTargetEnvironment != null;
 
+  /// The Environment a v1/v2 Task selected before canonical Environments were
+  /// required. It is persisted so that rewriting the Task at schema version 3
+  /// does not silently withdraw the legacy start allowance; explicitly
+  /// reconfiguring `targetEnvironmentIds` clears it.
+  String? get legacyTargetEnvironment => _legacyTargetEnvironment;
+
   List<String> get effectiveTargetEnvironmentIds {
     final ids = <String>{...targetEnvironmentIds};
     final legacy = _legacyTargetEnvironment;

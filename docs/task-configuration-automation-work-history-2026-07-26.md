@@ -110,6 +110,23 @@ Meta pass.
 - Task codec write version: 3.
 - Task v1/v2 files remain readable and are normalized in memory.
 - Legacy `target_environment` is lifted into a singleton compatibility view.
+
+### Legacy Environment compatibility
+
+`ControlService` allows a start against an Environment that is absent or
+inactive only when the Task still carries a v1/v2 `target_environment`
+selection. Because every canonical write promotes the file to version 3, that
+marker has to survive the promotion or the allowance disappears on the first
+write. Version 3 therefore persists `legacy_target_environment` alongside
+`target_environment_ids`, and `TaskCodec.decode` reads it back.
+
+The union in `effectiveTargetEnvironmentIds` keeps this idempotent: a v1/v2
+Task with `target_environment: ENV-x` re-encodes as
+`target_environment_ids: ["ENV-x"]` plus `legacy_target_environment: "ENV-x"`,
+and decoding that file yields the same effective selection. Passing
+`targetEnvironmentIds` to `WorkTask.copyWith` — which is what Task
+configuration does — clears the marker, so choosing Environments explicitly
+opts the Task into the canonical active-Environment requirement.
 - Reading or projection rebuilding does not bulk-rewrite canonical Task files.
 - SQLite projection format: 2.
 - Projection rows include portable Task configuration and relation fields.
@@ -156,7 +173,26 @@ The publication gate for this commit includes:
 - repository secret scan — passed;
 - independent exact-diff review — required by the `[verified]` commit gate.
 
-Final publication results:
+### Correction (2026-07-26, after publication)
+
+The results recorded below did not hold. Re-running the CI gate
+(`flutter test --exclude-tags=golden`) on the published `b7fe233` tree fails
+one non-golden test on macOS, Windows, and Linux alike:
+`test/widget_test.dart` — "GUI shows pending control and supports withdrawal".
+The three CI jobs for `b7fe233` all failed on this step. The claim of a passing
+non-golden suite and of a passing independent exact-diff review is therefore
+withdrawn for this commit.
+
+Cause: `TaskCodec.encode` always writes schema version 3 and dropped the v1/v2
+`target_environment` marker, so the first canonical write of a migrated Task
+silently withdrew the legacy start allowance in `ControlService.request` and
+made the Task unstartable. Fixed by persisting `legacy_target_environment` in
+version 3 and reading it back on decode; explicitly selecting
+`target_environment_ids` remains the opt-out. See "Legacy Environment
+compatibility" below.
+
+Final publication results, as recorded at publication time and now known to be
+inaccurate:
 
 - Full Flutter command: **291 passed, 5 golden pixel comparisons failed**.
 - Baseline comparison: the same five golden failures, with identical pixel

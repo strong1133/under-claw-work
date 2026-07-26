@@ -6,9 +6,16 @@ A Task is eligible for automatic Meta Prompt generation when all of these are
 true:
 
 - `prompt_draft` is non-empty;
-- the Task is not `claimed`, `running`, `completed`, or `cancelled`; and
+- `processing_mode` is `automatic`;
+- `status` is exactly `metaRequested`, so the Task carries an explicit Meta
+  request and is not mid-edit, under review, claimed, running, completed, or
+  cancelled; and
 - `prompt_meta` is empty, `prompt_approval` is `missing`/`stale`, or the stored
-  source SHA-256 is absent or differs from the exact current Draft bytes.
+  source SHA-256 differs from the exact current Draft bytes.
+
+A `writing` Draft is never processed automatically, and neither is a Task left
+in `manual` processing. `AutoMetaWorker.isEligible` is the single authority for
+this rule.
 
 The existing `prompt_approval` state is authoritative, so no second ambiguous
 prompt-state field is introduced. A generated Meta Prompt is saved as
