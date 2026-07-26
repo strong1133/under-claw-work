@@ -147,39 +147,41 @@ cli="$UNDER_CLAW_WORK_HOME/bin/worklog"
   "$(cat "$release/SOURCE-REVISION.txt")" ]]
 grep -q 'descriptors bundled.*: 0' "$UNDER_CLAW_WORK_HOME/ACCEPTED-RUNTIMES.txt"
 
-service_repo="$temp/service-repo"
-service_worktree="$temp/service-worktree"
-git init -q "$service_repo"
-git -C "$service_repo" -c user.name=Smoke -c user.email=smoke@example.invalid \
-  commit --allow-empty -q -m initial
-git -C "$service_repo" worktree add --detach -q "$service_worktree"
-fake_bin="$temp/fake-bin"
-mkdir -p "$fake_bin"
-for executable in systemctl hermes; do
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$fake_bin/$executable"
-  chmod 0755 "$fake_bin/$executable"
-done
-PATH="$fake_bin:$PATH" \
-HOME="$temp/service-home" \
-XDG_CONFIG_HOME="$temp/service-home/.config" \
-UNDER_CLAW_WORK_HOME="$UNDER_CLAW_WORK_HOME" \
-UNDER_CLAW_HERMES_BIN="$fake_bin/hermes" \
-bash "$release/packaging/install-auto-meta-service.sh" \
-  "$service_worktree" ENV-smoke adapter-smoke 15
-grep -Fq "$service_worktree" \
-  "$temp/service-home/.config/systemd/user/under-claw-auto-meta.service"
-set +e
-timeout 1 env \
-  UNDER_CLAW_WORKLOG_BIN="$fake_bin/hermes" \
+if [[ "$(uname -s)" == Linux ]]; then
+  service_repo="$temp/service-repo"
+  service_worktree="$temp/service-worktree"
+  git init -q "$service_repo"
+  git -C "$service_repo" -c user.name=Smoke -c user.email=smoke@example.invalid \
+    commit --allow-empty -q -m initial
+  git -C "$service_repo" worktree add --detach -q "$service_worktree"
+  fake_bin="$temp/fake-bin"
+  mkdir -p "$fake_bin"
+  for executable in systemctl hermes; do
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$fake_bin/$executable"
+    chmod 0755 "$fake_bin/$executable"
+  done
+  PATH="$fake_bin:$PATH" \
+  HOME="$temp/service-home" \
+  XDG_CONFIG_HOME="$temp/service-home/.config" \
+  UNDER_CLAW_WORK_HOME="$UNDER_CLAW_WORK_HOME" \
   UNDER_CLAW_HERMES_BIN="$fake_bin/hermes" \
-  bash "$release/packaging/auto-meta-watch.sh" \
-    "$service_worktree" ENV-smoke adapter-smoke 5 >/dev/null 2>&1
-watcher_status=$?
-set -e
-[[ "$watcher_status" -eq 124 ]] || {
-  echo "Auto Meta watcher rejected or exited in a linked worktree: $watcher_status" >&2
-  exit 1
-}
+  bash "$release/packaging/install-auto-meta-service.sh" \
+    "$service_worktree" ENV-smoke adapter-smoke 15
+  grep -Fq "$service_worktree" \
+    "$temp/service-home/.config/systemd/user/under-claw-auto-meta.service"
+  set +e
+  timeout 1 env \
+    UNDER_CLAW_WORKLOG_BIN="$fake_bin/hermes" \
+    UNDER_CLAW_HERMES_BIN="$fake_bin/hermes" \
+    bash "$release/packaging/auto-meta-watch.sh" \
+      "$service_worktree" ENV-smoke adapter-smoke 5 >/dev/null 2>&1
+  watcher_status=$?
+  set -e
+  [[ "$watcher_status" -eq 124 ]] || {
+    echo "Auto Meta watcher rejected or exited in a linked worktree: $watcher_status" >&2
+    exit 1
+  }
+fi
 
 if command -v shasum >/dev/null 2>&1; then
   app_hash_before="$(shasum -a 256 \
