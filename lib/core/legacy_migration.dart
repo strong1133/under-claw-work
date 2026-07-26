@@ -30,6 +30,37 @@ class LegacyPromptBlock {
   final List<String> relatedIds;
   final String sourcePath;
   final int sourceLine;
+
+  /// First path segment of [sourcePath]. The legacy corpus encodes its Domain
+  /// in the directory layout (`<domain>/2026/07/2026-07-21.md`), so this is
+  /// the key an importer maps to a canonical Domain.
+  String get sourcePrefix {
+    final segments = p.posix.split(sourcePath.replaceAll(r'\', '/'));
+    return segments.length > 1 ? segments.first : '';
+  }
+}
+
+/// Portable data a block carried that could not be represented canonically.
+/// Recorded rather than silently dropped, and never written into Task YAML.
+class MigrationResidue {
+  const MigrationResidue({
+    required this.legacyId,
+    required this.field,
+    required this.value,
+    required this.reason,
+  });
+
+  final String legacyId;
+  final String field;
+  final String value;
+  final String reason;
+
+  Map<String, Object?> toJson() => {
+    'legacy_id': legacyId,
+    'field': field,
+    'value': value,
+    'reason': reason,
+  };
 }
 
 class MigrationDryRun {
@@ -73,10 +104,16 @@ class LegacyMigrationService {
     final fingerprintBytes = BytesBuilder(copy: false);
     for (final file in files) {
       final content = file.readAsStringSync();
-      fingerprintBytes.add(
-        utf8.encode('${p.relative(file.path, from: source.path)}\n'),
-      );
+      final relative = p.relative(file.path, from: source.path);
+      fingerprintBytes.add(utf8.encode('$relative\n'));
       fingerprintBytes.add(utf8.encode(content));
+      // Convention documents (`_SYSTEM.md`, `_dashboard.md`) describe the block
+      // format using fully-formed example blocks. Parsing them would import
+      // documentation as real Tasks, so they are excluded by name.
+      if (p.basename(file.path).startsWith('_')) {
+        skipped.add('$relative: convention document excluded');
+        continue;
+      }
       final parsed = _parseFile(file, content, source.path);
       blocks.addAll(parsed.$1);
       skipped.addAll(parsed.$2);
@@ -93,12 +130,22 @@ class LegacyMigrationService {
     return result;
   }
 
+  /// Imports [plan] into canonical Tasks.
+  ///
+  /// [domainIdsBySourcePrefix] maps the legacy corpus' top-level directory
+  /// (its de-facto Domain) to a canonical Domain id; blocks with no entry fall
+  /// back to [domainId]. [targetProjectIds] maps a `targets::` value to a
+  /// canonical Project id — unmapped values stay out of canonical Task data
+  /// because the legacy corpus records local absolute paths there, and those
+  /// must never enter portable entities.
   List<WorkTask> import(
     MigrationDryRun plan, {
     required bool approved,
     required String domainId,
     required String milestoneId,
     required String targetEnvironment,
+    Map<String, String> domainIdsBySourcePrefix = const {},
+    Map<String, String> targetProjectIds = const {},
   }) {
     if (!approved) {
       throw StateError('Migration import requires explicit approval.');
@@ -113,32 +160,60 @@ class LegacyMigrationService {
         .expand((task) => task.legacyIds)
         .toSet();
     final created = <WorkTask>[];
+    final residue = <MigrationResidue>[];
+    final taskIdByLegacyId = <String, String>{};
     try {
       for (final block in plan.blocks) {
         if (existingLegacy.contains(block.legacyId)) {
           throw StateError('Legacy ID already imported: ${block.legacyId}');
         }
         final meta = block.meta.trim();
+        final blockDomainId =
+            domainIdsBySourcePrefix[block.sourcePrefix] ?? domainId;
+        final projectIds = <String>[];
+        for (final target in block.targets) {
+          final projectId = targetProjectIds[target];
+          if (projectId == null) {
+            residue.add(
+              MigrationResidue(
+                legacyId: block.legacyId,
+                field: 'targets',
+                value: target,
+                reason: 'no canonical Project mapping supplied',
+              ),
+            );
+            continue;
+          }
+          if (!projectIds.contains(projectId)) projectIds.add(projectId);
+        }
         final task = WorkTask(
           id: newId('TSK'),
-          domainId: domainId,
-          milestoneId: milestoneId,
+          domainId: blockDomainId,
+          // A Milestone is only valid inside its own Domain, so it applies to
+          // the fallback Domain alone.
+          milestoneId: blockDomainId == domainId ? milestoneId : '',
           title: _title(block.draft, block.legacyId),
-          status: _status(block.stateLabel),
+          status: _status(block.stateLabel, hasMeta: meta.isNotEmpty),
           promptDraft: block.draft,
           promptMeta: meta,
           promptDraftRevision: 1,
           promptMetaSourceRevision: meta.isEmpty ? 0 : 1,
+          promptMetaSourceSha256: meta.isEmpty
+              ? ''
+              : TaskRepository.draftSha256(block.draft),
           approval: meta.isEmpty
               ? PromptApproval.missing
               : PromptApproval.pending,
           autoDeriveTasks: false,
           targetEnvironment: targetEnvironment,
+          projectIds: projectIds,
           legacyIds: [block.legacyId],
         );
         repository.create(task);
         created.add(task);
+        taskIdByLegacyId[block.legacyId] = task.id;
       }
+      _linkRelatedTasks(repository, plan, created, taskIdByLegacyId, residue);
     } catch (_) {
       for (final task in created.reversed) {
         repository.delete(task.id);
@@ -148,8 +223,47 @@ class LegacyMigrationService {
     _writeReport(
       plan,
       importedTaskIds: created.map((task) => task.id).toList(),
+      residue: residue,
     );
     return created;
+  }
+
+  /// Second pass: `related::` names legacy PT ids, which only resolve to Task
+  /// ids once every block in the import has one. Ids outside this import stay
+  /// unresolved and are recorded rather than dropped.
+  void _linkRelatedTasks(
+    TaskRepository repository,
+    MigrationDryRun plan,
+    List<WorkTask> created,
+    Map<String, String> taskIdByLegacyId,
+    List<MigrationResidue> residue,
+  ) {
+    for (var index = 0; index < plan.blocks.length; index++) {
+      final block = plan.blocks[index];
+      if (block.relatedIds.isEmpty) continue;
+      final relatedTaskIds = <String>[];
+      for (final legacyId in block.relatedIds) {
+        final taskId = taskIdByLegacyId[legacyId];
+        if (taskId == null) {
+          residue.add(
+            MigrationResidue(
+              legacyId: block.legacyId,
+              field: 'related',
+              value: legacyId,
+              reason: 'legacy id is not part of this import',
+            ),
+          );
+          continue;
+        }
+        if (taskId != created[index].id && !relatedTaskIds.contains(taskId)) {
+          relatedTaskIds.add(taskId);
+        }
+      }
+      if (relatedTaskIds.isEmpty) continue;
+      created[index] = repository.update(
+        created[index].copyWith(relatedTaskIds: relatedTaskIds),
+      );
+    }
   }
 
   void rollback(String importId) {
@@ -280,8 +394,17 @@ class LegacyMigrationService {
     return line.length <= 80 ? line : '${line.substring(0, 77)}...';
   }
 
-  TaskStatus _status(String label) {
+  /// Maps a legacy state label to a canonical status.
+  ///
+  /// `요청완료` means the *request* was finished, not the work: the legacy
+  /// convention document states the user writes the label by hand and performs
+  /// the work themselves. It therefore imports as a waiting state, not as
+  /// `completed`. Only a bare completion label closes the Task.
+  TaskStatus _status(String label, {required bool hasMeta}) {
     final normalized = label.trim().toLowerCase();
+    if (normalized == '요청완료' || normalized == 'requested') {
+      return hasMeta ? TaskStatus.metaReview : TaskStatus.metaRequested;
+    }
     if (normalized.contains('완료') || normalized == 'done') {
       return TaskStatus.completed;
     }
@@ -300,6 +423,7 @@ class LegacyMigrationService {
   void _writeReport(
     MigrationDryRun result, {
     required List<String> importedTaskIds,
+    List<MigrationResidue> residue = const [],
   }) {
     workspace.ensureLayout();
     final data = {
@@ -314,6 +438,7 @@ class LegacyMigrationService {
               'legacy_id': block.legacyId,
               'state': block.stateLabel,
               'source_path': block.sourcePath,
+              'source_prefix': block.sourcePrefix,
               'source_line': block.sourceLine,
               'targets': block.targets,
               'related_ids': block.relatedIds,
@@ -323,6 +448,7 @@ class LegacyMigrationService {
           .toList(),
       'skipped': result.skipped,
       'imported_task_ids': importedTaskIds,
+      'residue': residue.map((item) => item.toJson()).toList(),
     };
     _reportFile(result.importId).writeAsStringSync(
       '${const JsonEncoder.withIndent('  ').convert(data)}\n',

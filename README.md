@@ -103,6 +103,53 @@ Under Claw Work는 Agent를 대체하지 않는 **Agent 중립 작업환경·도
 
 기존 동명 파일이 Under Claw Work 소유가 아니면 덮어쓰지 않고 설치를 중단한다.
 
+### 기억 저장소는 사용자 소유다
+
+설치 시 사용자가 자신의 기억DB 저장소 경로를 지정하고, Under Claw Work는 그
+경로만 사용한다. 이후 Domain·Milestone·Persona·Skill Policy·host binding을 어떻게
+구성할지는 **사용자가 자발적으로 정하는 영역**이다. 도구도 Agent도 요청받지 않은
+저장소 구조 변경, Domain 임의 생성, 기록 이관을 수행하지 않는다.
+
+## Meta Prompt 작성 루프
+
+검증된 `generate_meta` runtime adapter가 없는 workstation host(Claude Code,
+Codex 등)에서 쓰는 실무 경로다. 추론은 host Agent가 하고, Under Claw Work는 큐와
+정본 기록을 제공한다.
+
+```bash
+# 1. Draft를 메타 작성 대기로 표시
+worklog task-prompt <workspace> <task-id> request-meta
+
+# 2. 대기 큐 조회 — task-id, 상태, Draft revision, 정본 경로, 제목
+worklog task-pending-meta <workspace>
+
+# 3. 큐가 알려준 정본 경로에서 Draft를 읽는다
+# 4. under-claw-meta-prompt를 명시적으로 호출해 결과를 파일로 저장한다
+
+# 5. 같은 Draft revision에 대해 결과를 기록
+worklog task-prompt <workspace> <task-id> meta <meta-file>
+
+# 6. 검토 후 승인
+worklog task-prompt <workspace> <task-id> approve
+```
+
+5단계 이후 Draft를 편집하면 Task가 `writing`으로 돌아가고 승인이 stale이 되므로
+4단계를 다시 수행해야 한다. 검증된 adapter가 있는 원격 Hermes host는 같은 루프를
+`auto-meta-next`가 대신한다.
+
+## 전달 파일 첨부
+
+Domain·Milestone·Task가 참고할 전달 파일은 Reference 정본 데이터로 편입한다.
+파일 본문이 Reference 엔티티의 Markdown body가 되므로, 원격 agent host를 포함한
+어느 clone에서도 같은 내용을 읽는다. 로컬 절대경로는 정본에 들어가지 않는다.
+
+```bash
+worklog reference-attach <workspace> "<제목>" <파일> [domain] [milestone] [task]
+```
+
+UTF-8 텍스트만 받고 상한은 256 KiB다. 더 큰 자료는 별도 저장소에 두고 Repository
+엔티티로 참조한다.
+
 ## Task 실행 스킬
 
 설명과 명령 선택은 `under-claw-work`, 실제 governed Task 실행은

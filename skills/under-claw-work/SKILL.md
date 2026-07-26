@@ -12,7 +12,15 @@ It explains and routes; it does not silently execute another skill.
 ## Identity
 
 Under Claw Work does not replace Hermes, Claude Code, Codex, or their models.
-It is a provider-neutral tool and skill collection used by those hosts.
+It is a provider-neutral tool and skill collection used by those hosts — a set
+of skills plus the working discipline around them, shared by the AI setup on a
+workstation and by a Hermes agent on a remote host.
+
+The memory repository is the user's, not the product's. Installation asks for
+the path to it and touches nothing else; from that point on, tailoring the
+Domains, Milestones, Personas, Skill Policies, and host bindings inside it is
+the user's own area. Do not restructure a user's workspace, invent Domains, or
+migrate their records unless they ask for that specific change.
 
 It provides:
 
@@ -50,19 +58,52 @@ The Meta, loop, and plan skills are supplied by the checksum-pinned
 4. Do not claim automated host support without verified runtime evidence.
 5. Keep provider/model details out of portable Task content.
 6. Store secrets only through approved local secure stores, never Git.
+7. Keep local absolute paths out of canonical entities. Legacy imports that
+   carry them record the value in the migration report instead, and binding a
+   path to a Repository entity stays an explicit user decision.
+8. Treat the user's memory repository as theirs: change only what was asked.
+
+## Meta Prompt authoring loop (host Agent, no runtime adapter)
+
+This is the practical path on a workstation host such as Claude Code or Codex,
+where no verified `generate_meta` runtime adapter is registered. The host Agent
+supplies the reasoning; Under Claw Work supplies the queue and the record.
+
+1. The user marks a Draft as awaiting Meta:
+   `worklog task-prompt <workspace> <task-id> request-meta`
+2. Poll the queue. Each row is `task-id`, state, Draft revision, canonical file
+   path, and title:
+   `worklog task-pending-meta <workspace>`
+3. Read the Draft from the canonical path in that row.
+4. Invoke `under-claw-meta-prompt` explicitly and write its output to a file.
+   Naming the skill in prose is not an invocation.
+5. Record the result against the same Draft revision:
+   `worklog task-prompt <workspace> <task-id> meta <meta-file>`
+6. The user reviews and approves:
+   `worklog task-prompt <workspace> <task-id> approve`
+
+Editing the Draft after step 5 returns the Task to `writing` and makes the
+approval stale, so step 4 must re-run. `auto-meta-next` covers the same loop on
+a remote Hermes host that does have a verified adapter; do not claim automatic
+generation on a host without one.
 
 ## Useful CLI routes
 
 ```text
 worklog task-list <workspace>
+worklog task-pending-meta <workspace>
 worklog task-create <workspace> <domain> <milestone> <title> <environment>
-worklog task-prompt <workspace> <task> <draft|meta|approve> [content-file]
+worklog task-prompt <workspace> <task> <draft|meta|approve|request-meta> [file]
 worklog meta-generate <workspace> <task-id> <adapter-id>
 worklog auto-meta-next <workspace> <environment-id> <adapter-id>
 worklog notification-register <workspace> <local-config-json>
 worklog notification-list <workspace>
 worklog entity-list <workspace> [kind]
 worklog entity-create <workspace> <kind> <title> [domain-id] [milestone-id]
+worklog reference-attach <workspace> <title> <file> [domain] [milestone] [task]
+worklog migrate-dry-run <workspace> <legacy-path>
+worklog migrate-import <workspace> <legacy-path> <domain> <milestone> <env> \
+  --approve [--map <map-json-file>]
 worklog scope-config-create <workspace> <kind> <descriptor-json-file>
 worklog context-resolve <workspace> <domain-id> [milestone-id] [channel-id]
 worklog host-binding-set <workspace> <descriptor-json-file>

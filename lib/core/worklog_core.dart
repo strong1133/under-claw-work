@@ -28,6 +28,7 @@ export 'notion_secret_store.dart';
 export 'notion_sync_coordinator.dart';
 export 'projection.dart';
 export 'projection_lifecycle.dart';
+export 'reference_attachment.dart';
 export 'relation_registry.dart';
 export 'process_runner_adapter.dart';
 export 'skill_pipeline.dart';

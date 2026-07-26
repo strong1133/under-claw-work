@@ -47,6 +47,69 @@ void main() {
     expect(find.text('Durable shared context'), findsOneWidget);
   });
 
+  testWidgets('Knowledge scope is selected, never typed as a raw id', (
+    tester,
+  ) async {
+    final temporary = Directory.systemTemp.createTempSync('under-claw-widget-');
+    addTearDown(() => temporary.deleteSync(recursive: true));
+    final workspace = Workspace(temporary)..ensureLayout();
+    final entities = EntityService(workspace);
+    final domain = entities.create(kind: EntityKind.domain, title: 'Product');
+    final milestone = entities.create(
+      kind: EntityKind.milestone,
+      title: 'MVP',
+      domainId: domain.id,
+    );
+    // A Milestone in a different Domain must not be offered once Product is
+    // selected.
+    final other = entities.create(kind: EntityKind.domain, title: 'Other');
+    entities.create(
+      kind: EntityKind.milestone,
+      title: 'Unrelated',
+      domainId: other.id,
+    );
+
+    await tester.pumpWidget(UnderClawWorkApp(workspaceOverride: temporary));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('workspace-area-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('knowledge').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+
+    // No free-text id fields survive.
+    expect(find.widgetWithText(TextField, 'Domain ID'), findsNothing);
+    expect(
+      find.widgetWithText(TextField, 'Milestone ID (optional)'),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('entity-domain')), findsOneWidget);
+    expect(find.byKey(const Key('entity-task')), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Title'),
+      'Recall rule',
+    );
+    await tester.tap(find.byKey(const Key('entity-domain')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Product · ${domain.id}').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('entity-milestone')));
+    await tester.pumpAndSettle();
+    expect(find.text('Unrelated · '), findsNothing);
+    await tester.tap(find.text('MVP · ${milestone.id}').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    final created = CanonicalRepository(
+      workspace,
+    ).list(EntityKind.knowledge).single;
+    expect((created.data['scope'] as Map)['domain_id'], domain.id);
+    expect((created.data['scope'] as Map)['milestone_id'], milestone.id);
+  });
+
   testWidgets('GUI exposes canonical sync and verified Meta generation', (
     tester,
   ) async {

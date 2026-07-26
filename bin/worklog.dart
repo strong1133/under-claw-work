@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:under_claw_work/core/worklog_cli_core.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -201,6 +202,21 @@ Commands:
           stdout.writeln(
             '${task.id}\t${task.status.name}\t${task.title}\t'
             'meta=${task.isMetaCurrent ? "ready" : "locked"}',
+          );
+        }
+      case 'task-pending-meta':
+        // The queue a host Agent polls before running $under-claw-meta-prompt.
+        // `metaRequested` waits for authoring, `metaReview` for approval.
+        final pendingRepository = TaskRepository(workspace);
+        for (final task in pendingRepository.list()) {
+          if (task.status != TaskStatus.metaRequested &&
+              task.status != TaskStatus.metaReview) {
+            continue;
+          }
+          stdout.writeln(
+            '${task.id}\t${task.status.name}\trev=${task.promptDraftRevision}\t'
+            '${p.relative(pendingRepository.canonicalFile(task.id).path, from: workspace.root.path)}\t'
+            '${task.title}',
           );
         }
       case 'env-register':
@@ -472,6 +488,30 @@ Commands:
           decoded.map((key, value) => MapEntry(key.toString(), value)),
         );
         stdout.writeln(binding.key);
+      case 'reference-attach':
+        if (arguments.length < 5) {
+          throw const FormatException(
+            'reference-attach requires workspace, title and file.',
+          );
+        }
+        final attached = ReferenceAttachmentService(workspace).attach(
+          file: File(arguments[4]),
+          title: arguments[3],
+          domainId: arguments.length > 5 && arguments[5].isNotEmpty
+              ? arguments[5]
+              : null,
+          milestoneId: arguments.length > 6 && arguments[6].isNotEmpty
+              ? arguments[6]
+              : null,
+          taskId: arguments.length > 7 && arguments[7].isNotEmpty
+              ? arguments[7]
+              : null,
+        );
+        projection.rebuild();
+        stdout.writeln(
+          '${attached.id}\tattached_document\t'
+          '${attached.data['source_filename']}',
+        );
       case 'entity-update':
         if (arguments.length < 5) {
           throw const FormatException(
@@ -1144,11 +1184,15 @@ Commands:
         final result = LegacyMigrationService(
           workspace,
         ).dryRun(Directory(arguments[2]));
+        final prefixes =
+            result.blocks.map((block) => block.sourcePrefix).toSet().toList()
+              ..sort();
         stdout.writeln(
           'dry_run=true import=${result.importId} '
           'blocks=${result.blocks.length} skipped=${result.skipped.length} '
           'canonical_writes=0',
         );
+        stdout.writeln('source_prefixes=${prefixes.join(",")}');
       case 'migrate-import':
         if (arguments.length < 7 || !arguments.contains('--approve')) {
           throw const FormatException(
@@ -1158,12 +1202,18 @@ Commands:
         }
         final service = LegacyMigrationService(workspace);
         final plan = service.dryRun(Directory(arguments[2]));
+        final mapIndex = arguments.indexOf('--map');
+        final mapping = mapIndex < 0 || mapIndex + 1 >= arguments.length
+            ? const <String, Object?>{}
+            : _migrationMapping(arguments[mapIndex + 1]);
         final tasks = service.import(
           plan,
           approved: true,
           domainId: arguments[3],
           milestoneId: arguments[4],
           targetEnvironment: arguments[5],
+          domainIdsBySourcePrefix: _stringMap(mapping, 'domains'),
+          targetProjectIds: _stringMap(mapping, 'projects'),
         );
         projection.rebuild();
         stdout.writeln(
@@ -1277,4 +1327,28 @@ List<String> _descriptorStrings(Map<String, Object?> source, String key) {
     throw FormatException('$key must be an array of strings.');
   }
   return value.cast<String>();
+}
+
+/// Reads the optional `--map` descriptor for `migrate-import`. It carries only
+/// canonical ids, so the legacy corpus' local paths stay out of Task YAML.
+Map<String, Object?> _migrationMapping(String path) {
+  final decoded = jsonDecode(File(path).readAsStringSync());
+  if (decoded is! Map<String, Object?> ||
+      decoded.keys.any((key) => !const {'domains', 'projects'}.contains(key))) {
+    throw const FormatException(
+      'Migration map must be an object with only domains and projects.',
+    );
+  }
+  return decoded;
+}
+
+Map<String, String> _stringMap(Map<String, Object?> source, String key) {
+  final value = source[key];
+  if (value == null) return const {};
+  if (value is! Map ||
+      value.keys.any((item) => item is! String) ||
+      value.values.any((item) => item is! String)) {
+    throw FormatException('$key must map strings to strings.');
+  }
+  return value.cast<String, String>();
 }

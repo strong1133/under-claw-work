@@ -31,6 +31,7 @@ export 'notification_service.dart';
 export 'process_runner_adapter.dart';
 export 'projection.dart';
 export 'projection_lifecycle.dart';
+export 'reference_attachment.dart';
 export 'release_update_service.dart';
 export 'relation_registry.dart';
 export 'schema_validator.dart';

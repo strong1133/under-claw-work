@@ -546,70 +546,150 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     });
   }
 
+  static String _entityLabel(CanonicalEntity entity) =>
+      '${entity.data['title'] ?? entity.data['name'] ?? entity.id} · '
+      '${entity.id}';
+
   Future<void> _createEntity() async {
     final title = TextEditingController();
     final body = TextEditingController();
-    final domainId = TextEditingController();
-    final milestoneId = TextEditingController();
-    final taskId = TextEditingController();
+    // Scope is chosen from the canonical entities that already exist. Typing a
+    // ULID by hand is not a workflow anyone can carry out reliably.
+    final workspace = Workspace(_root!);
+    final canonical = CanonicalRepository(workspace);
+    List<CanonicalEntity> active(EntityKind kind) => canonical
+        .list(kind)
+        .where((item) => item.data['status'] == 'active')
+        .toList();
+    final domains = active(EntityKind.domain);
+    final milestones = active(EntityKind.milestone);
     // Task-level scope is only meaningful for memory entities (Knowledge /
     // Reference); it lets a fact be authored straight against a Task so
     // cross-agent recall by Task id works without an approved Match.
     final showTaskScope =
         _viewKind == EntityKind.knowledge || _viewKind == EntityKind.reference;
+    final tasks = showTaskScope ? TaskRepository(workspace).list() : const [];
+    var domainId = '';
+    var milestoneId = '';
+    var taskId = '';
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Create ${_viewKind.type}'),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Title'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final availableMilestones = domainId.isEmpty
+              ? const <CanonicalEntity>[]
+              : milestones
+                    .where((item) => item.data['domain_id'] == domainId)
+                    .toList();
+          return AlertDialog(
+            title: Text('Create ${_viewKind.type}'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: title,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    if (_viewKind != EntityKind.domain)
+                      DropdownButtonFormField<String>(
+                        key: const Key('entity-domain'),
+                        isExpanded: true,
+                        initialValue: domainId,
+                        decoration: const InputDecoration(labelText: 'Domain'),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('No Domain'),
+                          ),
+                          for (final domain in domains)
+                            DropdownMenuItem(
+                              value: domain.id,
+                              child: Text(_entityLabel(domain)),
+                            ),
+                        ],
+                        onChanged: (value) => setDialogState(() {
+                          domainId = value ?? '';
+                          if (!milestones.any(
+                            (item) =>
+                                item.id == milestoneId &&
+                                item.data['domain_id'] == domainId,
+                          )) {
+                            milestoneId = '';
+                          }
+                        }),
+                      ),
+                    if (_viewKind != EntityKind.domain)
+                      DropdownButtonFormField<String>(
+                        key: const Key('entity-milestone'),
+                        isExpanded: true,
+                        initialValue: milestoneId,
+                        decoration: const InputDecoration(
+                          labelText: 'Milestone (optional)',
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('No Milestone'),
+                          ),
+                          for (final milestone in availableMilestones)
+                            DropdownMenuItem(
+                              value: milestone.id,
+                              child: Text(_entityLabel(milestone)),
+                            ),
+                        ],
+                        onChanged: (value) =>
+                            setDialogState(() => milestoneId = value ?? ''),
+                      ),
+                    if (showTaskScope)
+                      DropdownButtonFormField<String>(
+                        key: const Key('entity-task'),
+                        isExpanded: true,
+                        initialValue: taskId,
+                        decoration: const InputDecoration(
+                          labelText:
+                              'Task (optional — scopes memory to a Task)',
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('No Task'),
+                          ),
+                          for (final task in tasks)
+                            DropdownMenuItem(
+                              value: task.id,
+                              child: Text('${task.title} · ${task.id}'),
+                            ),
+                        ],
+                        onChanged: (value) =>
+                            setDialogState(() => taskId = value ?? ''),
+                      ),
+                    TextField(
+                      controller: body,
+                      minLines: 3,
+                      maxLines: 8,
+                      decoration: const InputDecoration(
+                        labelText: 'Description / AI context',
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              if (_viewKind != EntityKind.domain)
-                TextField(
-                  controller: domainId,
-                  decoration: const InputDecoration(labelText: 'Domain ID'),
-                ),
-              if (_viewKind != EntityKind.domain)
-                TextField(
-                  controller: milestoneId,
-                  decoration: const InputDecoration(
-                    labelText: 'Milestone ID (optional)',
-                  ),
-                ),
-              if (showTaskScope)
-                TextField(
-                  controller: taskId,
-                  decoration: const InputDecoration(
-                    labelText: 'Task ID (optional — scopes memory to a Task)',
-                  ),
-                ),
-              TextField(
-                controller: body,
-                minLines: 3,
-                maxLines: 8,
-                decoration: const InputDecoration(
-                  labelText: 'Description / AI context',
-                ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Create'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Create'),
-          ),
-        ],
+          );
+        },
       ),
     );
     if (accepted != true) return;
@@ -618,11 +698,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         kind: _viewKind,
         title: title.text,
         body: body.text,
-        domainId: domainId.text.trim().isEmpty ? null : domainId.text.trim(),
-        milestoneId: milestoneId.text.trim().isEmpty
-            ? null
-            : milestoneId.text.trim(),
-        taskId: taskId.text.trim().isEmpty ? null : taskId.text.trim(),
+        domainId: domainId.isEmpty ? null : domainId,
+        milestoneId: milestoneId.isEmpty ? null : milestoneId,
+        taskId: taskId.isEmpty ? null : taskId,
       );
       _projection!.rebuild();
       setState(() {
