@@ -1,0 +1,8 @@
+# 접속정보·자격증명은 어떤 형태로도 커밋하지 않는다
+.env
+*.env
+db.env
+credentials.json
+*.pem
+*.key
+.pgpass
